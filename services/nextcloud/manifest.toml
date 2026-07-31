@@ -1,0 +1,44 @@
+# What a tool can know about this service without evaluating any Nix.
+#
+# `ryra search` reads a folder; it does not instantiate a NixOS configuration.
+# Everything here is therefore duplicated-by-design from service.nix, and the
+# duplication is the point: the alternative is a registry you cannot list
+# without a working nixpkgs and thirty seconds of evaluation.
+
+[service]
+name = "nextcloud"
+summary = "Files, calendar and contacts"
+category = "productivity"
+url = "https://nextcloud.com"
+
+# The selfhostblocks module that implements this. The mechanism imports it, so
+# the host's SHB import list does not grow per service.
+shb-module = "nextcloud-server"
+
+# Owns data that cannot be rebuilt from the flake, so it gets its own dataset
+# on safe/ and is covered by the pre-switch snapshot.
+stateful = true
+dataDir = "/var/lib/nextcloud"
+owner = "nextcloud"
+group = "nextcloud"
+
+# Contracts. `needs` is what the host must already provide for this service to
+# evaluate; `provides` is what it offers others, so that "who is the OIDC
+# provider" is resolved by role rather than hardcoded to a name.
+needs = ["ssl", "secrets", "backup", "ldap", "oidc", "postgresql"]
+provides = []
+
+# Secrets this service requests, as sops keys. Documentation only: the
+# authority is the `.request` lines in service.nix, which the module system
+# checks. This list exists so `ryra add` can tell you what to put in
+# secrets.yaml before the first rebuild fails.
+[secrets]
+"nextcloud/adminpass" = "Nextcloud admin account password"
+"nextcloud/sso/secret" = "OIDC client secret, shared with Authelia"
+"restic/nextcloud" = "Restic repository passphrase"
+
+# Two logical secrets that must resolve to ONE value, via `settings.key`.
+# Getting these wrong produces a service that starts cleanly and cannot log in.
+[secrets.aliases]
+"nextcloud/ldap_admin_password" = "lldap/user_password"
+"authelia/nextcloud_sso_secret" = "nextcloud/sso/secret"
