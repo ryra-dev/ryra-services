@@ -42,10 +42,17 @@ service's behalf instead of making the host maintain an import list.
 
 Where we depart, and why:
 
-- **`manifest.toml`.** SHB has no equivalent, and does not need one: it is
-  consumed only by Nix. A registry has to be listable and searchable by tooling
-  that has no nixpkgs and no thirty seconds to evaluate one. The manifest
-  duplicates facts that also appear in `service.nix`, on purpose.
+- **The flake is the source of truth, and there is no manifest file.** A
+  service is an attrset of `meta` and `module` exposed as a flake output, so
+  nothing sits beside a definition that can disagree with it. `meta` is a pure
+  value: `nix eval --json .#index` reads the whole registry without nixpkgs,
+  without a builder and without instantiating a NixOS system.
+
+  Anything the module can answer for itself is asked of the module rather than
+  written down twice: a service backs up if it exposes a `backup` requester,
+  and it is stateful if it exposes a `mount`. Only what must be known *before*
+  the module can be imported lives in `meta` (`optionRoot`, `shbModule`) — and
+  those are load-bearing because `imports` may not depend on `config`.
 - **`SKILL.md` per service.** SHB documents in a manual; the old ryra registry
   documented in dense TOML comments and had exactly one `.md` in the whole
   repo. Neither leaves a home for "a restore needs both repositories" or
@@ -58,11 +65,11 @@ Where we depart, and why:
 ## Layout
 
 ```
-flake.nix                     input-free; exports the mechanism and the registry
-lib/services-module.nix       ryra.services: enable list -> aspects, certs, datasets
+flake.nix                     input-free; exports the registry, its index and its checks
+lib/contracts/                ssl, secret, backup, mount: ours, SHB-compatible
+lib/services-module.nix       ryra.services: enable list -> aspects, certs, backups, datasets
 services/<name>/
-├── manifest.toml             what tooling can know without evaluating Nix
-├── service.nix               the aspect, as a function of (name, domain, ssl, ...)
+├── default.nix               { meta = <pure value>; module = <function>; }
 ├── SKILL.md                  operational knowledge: restore, upgrade traps
 └── secrets.example.yaml      the sops keys this service expects
 ```

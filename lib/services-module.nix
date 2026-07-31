@@ -90,12 +90,21 @@ let
       };
 
   # Everything known about one enabled service, resolved once.
+  #
+  # Read from the registry's FLAKE OUTPUT, not from a file beside the module.
+  # There is no manifest to disagree with the definition, and anything the
+  # module can answer for itself is asked of the module rather than declared
+  # twice.
   resolve =
     qualified: opts:
     let
       ref = parse qualified;
-      dir = "${registries.${ref.registry}}/services/${ref.service}";
-      manifest = (builtins.fromTOML (builtins.readFile "${dir}/manifest.toml")).service;
+      registry = registries.${ref.registry};
+      svc =
+        registry.ryraServices.${ref.service} or (throw
+          "ryra.services: registry `${ref.registry}` has no service `${ref.service}`. It offers: ${
+            lib.concatStringsSep ", " (builtins.attrNames (registry.ryraServices or { }))
+          }.");
 
       # The running thing is named for the SERVICE, not for the registry that
       # defined it. `ryra-nextcloud.tailnet.ts.net` would be absurd as a URL,
@@ -104,30 +113,27 @@ let
       name = opts.name or ref.service;
     in
     rec {
-      inherit
-        qualified
-        name
-        dir
-        manifest
-        ;
+      inherit qualified name;
       inherit (ref) registry service;
+      inherit (svc) meta module;
 
       subdomain = opts.subdomain or name;
       settings = opts.settings or { };
 
-      # Where the service's options actually live. NOT derivable from the file
-      # name: SHB's nextcloud-server.nix declares shb.nextcloud, and the
-      # mechanism has to reach `<optionRoot>.backup` and `<optionRoot>.mount`
-      # to wire anything at all.
-      optionRoot = manifest.option-root or [
-        "shb"
-        name
-      ];
+      # Where the service's options live. NOT derivable: selfhostblocks'
+      # nextcloud-server.nix declares shb.nextcloud, and the mechanism must
+      # reach <optionRoot>.backup and <optionRoot>.mount to wire anything.
+      optionRoot = meta.optionRoot;
       options = getAttrFromPath optionRoot config;
 
-      shbModule = manifest.shb-module or null;
-      backs-up = manifest.backup or false;
-      stateful = manifest.stateful or false;
+      shbModule = meta.shbModule or null;
+
+      # Asked of the module, not declared in metadata. A service backs up if it
+      # exposes a backup requester; it is stateful if it says where its state
+      # lives. Neither fact can drift out of step with the module, because
+      # neither is written down twice.
+      backsUp = options ? backup;
+      stateful = options ? mount;
     };
 
   enabled = mapAttrsToList resolve services;
@@ -156,7 +162,7 @@ in
     )
     ++ map (
       s:
-      import "${s.dir}/service.nix" {
+      s.module {
         inherit (s) name subdomain settings;
         inherit domain contracts;
         ssl = if sslFor == null then null else sslFor s.name;
@@ -209,8 +215,8 @@ in
           message = "ryra.services: ${(builtins.head needsShb).qualified} is implemented by the selfhostblocks module `${(builtins.head needsShb).shbModule}`, but no `selfhostblocks` was passed to the mechanism. Pass the host's flake input.";
         }
         {
-          assertion = sslFor != null || builtins.all (s: !(s.manifest.ssl or true)) enabled;
-          message = "ryra.services: a service requested a certificate but `sslFor` is null. Give the mechanism a provider, for example `sslFor = name: config.ryra.tailscale.certs.\${name};`.";
+          assertion = sslFor != null || enabled == [ ];
+          message = "ryra.services: services are enabled but `sslFor` is null, so none of them can be given a certificate. Pass a provider, for example `sslFor = name: config.ryra.tailscale.certs.\${name};`.";
         }
       ];
     }
@@ -237,7 +243,7 @@ in
               retention = backupRetention;
             };
           }
-        ) (builtins.filter (s: s.backs-up) enabled)
+        ) (builtins.filter (s: s.backsUp) enabled)
       );
 
       shb.sops.secret = lib.listToAttrs (
@@ -246,7 +252,7 @@ in
           lib.nameValuePair "restic/${s.name}" {
             request = config.shb.restic.instances.${s.name}.settings.passphrase.request;
           }
-        ) (builtins.filter (s: s.backs-up) enabled)
+        ) (builtins.filter (s: s.backsUp) enabled)
       );
     }
 
@@ -263,9 +269,9 @@ in
               enable = true;
               inherit (s.options.mount) path;
             }
-            // lib.optionalAttrs (s.manifest ? owner) {
-              owner = s.manifest.owner;
-              group = s.manifest.group or s.manifest.owner;
+            // lib.optionalAttrs (s.options.mount ? owner) {
+              inherit (s.options.mount) owner;
+              group = s.options.mount.group or s.options.mount.owner;
             }
           )
         ) (builtins.filter (s: s.stateful) enabled)
