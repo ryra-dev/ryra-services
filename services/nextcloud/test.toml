@@ -1,0 +1,77 @@
+# Checks for nextcloud, run against a machine that is already serving.
+#
+# Every step here only READS. That is not a convention: `[[tests.checks]]`
+# refuses to deserialize an `add` or a `remove`, so a destructive check cannot
+# be written down. On NixOS installing is a deploy (`nixos-rebuild`), not a
+# test step.
+#
+# `$SERVICE_URL` is supplied by the runner as https://<service>.<domain>, so
+# these assertions stay true on a machine with a different name.
+
+[[tests]]
+name = "nextcloud"
+
+# The units the service actually needs. phpfpm is the one that serves; nginx is
+# shared, but a check that skips it reports a healthy Nextcloud on a box where
+# nothing can reach it.
+[[tests.checks]]
+action = "wait"
+unit = "phpfpm-nextcloud.service"
+timeout = 60
+
+[[tests.checks]]
+action = "wait"
+unit = "nginx.service"
+timeout = 60
+
+# The certificate is its own unit and its own failure. Worth asserting
+# separately, because when it fails nginx does not start at all and every other
+# check on the box goes red at once with no indication of why.
+[[tests.checks]]
+action = "wait"
+unit = "tailscale-cert-nextcloud.service"
+timeout = 60
+
+# 302 rather than 200: an unauthenticated GET redirects to the login flow.
+# Asserting 200 here would mean asserting that Nextcloud does NOT require a
+# login, which is the opposite of what we want to be true.
+[[tests.checks]]
+action = "http"
+name = "answers on its own url"
+url = "$SERVICE_URL/"
+status = 302
+poll = { interval = 3, attempts = 10 }
+
+# Reachable through the reverse proxy AND reachable at all: status.php answers
+# without a session, so a 200 here separates "nginx is up" from "php is up".
+[[tests.checks]]
+action = "http"
+name = "status.php answers"
+url = "$SERVICE_URL/status.php"
+status = 200
+poll = { interval = 3, attempts = 10 }
+
+# SSO is wired, not merely installed. The previous host config learned this the
+# hard way: an app can be present and not configured, and the difference is
+# invisible until somebody tries to log in.
+[[tests.checks]]
+action = "shell"
+name = "oidc and ldap apps are enabled"
+run = "sudo nextcloud-occ app:list | grep -q oidc_login && sudo nextcloud-occ app:list | grep -q user_ldap"
+timeout = 60
+
+# The data directory is on its own dataset. This is the check that would have
+# caught today's near-miss: moving datasets into the registry mechanism silently
+# produced none for nextcloud, and everything still built and started.
+[[tests.checks]]
+action = "shell"
+name = "data directory is its own zfs dataset"
+run = "zfs list -H -o name | grep -qx rpool/safe/nextcloud"
+
+# A backup that has never produced a snapshot is not a backup. Reads only: it
+# lists what restic already has rather than taking a new one.
+[[tests.checks]]
+action = "shell"
+name = "restic repository holds a snapshot"
+run = "sudo restic-backups-nextcloud_srv_backups_nextcloud exec snapshots | grep -q /var/lib/nextcloud"
+timeout = 60

@@ -1,0 +1,62 @@
+# Checks for linkding, run against a machine that is already serving.
+#
+# Reads only. See services/nextcloud/test.toml for why that is a property of
+# the schema rather than a habit.
+
+[[tests]]
+name = "linkding"
+
+[[tests.checks]]
+action = "wait"
+unit = "linkding.service"
+timeout = 90
+
+[[tests.checks]]
+action = "wait"
+unit = "nginx.service"
+timeout = 60
+
+# The cert unit is asserted on its own because its failure is the loudest and
+# least obvious one on the box: nginx will not start with a vhost pointing at a
+# certificate that is not there, so every service goes down and none of them
+# say why. Adding linkding did exactly this.
+[[tests.checks]]
+action = "wait"
+unit = "tailscale-cert-linkding.service"
+timeout = 60
+
+# 302 to the Authelia login. This is the check that proves SSO is actually in
+# front of the app: a 200 here would mean the bookmark manager is answering
+# anonymously, which is the failure worth catching.
+[[tests.checks]]
+action = "http"
+name = "redirects an anonymous visitor to sso"
+url = "$SERVICE_URL/"
+status = 302
+poll = { interval = 3, attempts = 10 }
+
+# Bound to loopback and nowhere else. If this ever answers on the tailnet
+# address directly, the reverse proxy has been bypassed and so has Authelia.
+[[tests.checks]]
+action = "shell"
+name = "listens on loopback only"
+run = "ss -tlnp 2>/dev/null | grep -q '127.0.0.1:9090' && ! ss -tlnp 2>/dev/null | grep -qE '(0\\.0\\.0\\.0|\\*):9090'"
+
+[[tests.checks]]
+action = "shell"
+name = "data directory is its own zfs dataset"
+run = "zfs list -H -o name | grep -qx rpool/safe/linkding"
+
+# The admin credentials arrived as an env file, not as a password. A secret
+# whose content is a bare string produces a service that starts and has no
+# account anyone can log in to.
+[[tests.checks]]
+action = "shell"
+name = "admin credentials are an env file"
+run = "sudo grep -q '^LD_SUPERUSER_NAME=' /run/secrets/linkding/admin"
+
+[[tests.checks]]
+action = "shell"
+name = "restic repository holds a snapshot"
+run = "sudo restic-backups-linkding_srv_backups_linkding exec snapshots | grep -q /var/lib/linkding"
+timeout = 60
