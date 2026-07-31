@@ -125,6 +125,16 @@
         };
       };
 
+      # Where the state lives. Declared here rather than read off a `mount`
+      # output because selfhostblocks' nextcloud module does not implement that
+      # contract: only 4 of its 18 services do. Guessing would put Nextcloud's
+      # files outside every snapshot while everything still appeared to work.
+      ryra.services.state.${name} = {
+        path = "/var/lib/${name}";
+        owner = "nextcloud";
+        group = "nextcloud";
+      };
+
       shb.sops.secret."${name}/adminpass".request = config.shb.nextcloud.adminPass.request;
       shb.sops.secret."${name}/sso/secret".request = config.shb.nextcloud.apps.sso.secret.request;
 

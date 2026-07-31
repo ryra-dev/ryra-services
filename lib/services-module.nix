@@ -136,6 +136,12 @@ let
       subdomain = opts.subdomain or name;
       settings = opts.settings or { };
 
+      # Host-side overrides for the generated dataset. Needed because a
+      # service's `mount` is not obliged to say who owns the files: SHB's
+      # contract is `{ path }` and nothing more, so a host that carves ZFS
+      # datasets has to be able to supply the rest.
+      dataset = opts.dataset or { };
+
       # Where the service's options live. NOT derivable: selfhostblocks'
       # nextcloud-server.nix declares shb.nextcloud, and the mechanism must
       # reach <optionRoot>.backup and <optionRoot>.mount to wire anything.
@@ -167,12 +173,24 @@ let
   # anywhere else because they are not attributes of a resolved service.
   optionsOf = s: getAttrFromPath s.optionRoot config;
 
-  # Asked of the module, not declared in metadata. A service backs up if it
-  # exposes a backup requester; it is stateful if it says where its state
-  # lives. Neither fact can drift out of step with the module, because neither
-  # is written down twice.
+  # Asked of the module, not declared in metadata: a service backs up if it
+  # exposes a backup requester, so that fact cannot drift out of step with the
+  # module.
   backsUp = s: (optionsOf s) ? backup;
-  stateful = s: (optionsOf s) ? mount;
+
+  # State is NOT asked of the module, and the reason is worth writing down.
+  #
+  # `mount` would be the natural place, but only 4 of selfhostblocks' 18
+  # services implement it: nextcloud, the one this registry started with, does
+  # not. Deriving "is this stateful" from `mount` therefore means a stateful
+  # service silently gets no dataset, which is the worst failure available
+  # here: everything builds, everything starts, and the data quietly lands on
+  # the parent dataset with no snapshot covering it.
+  #
+  # So a service DECLARES its state into `ryra.services.state`, which is ours
+  # and always present, and the assertion below makes forgetting an error.
+  declaresState = s: config.ryra.services.state ? ${s.name};
+  stateless = s: s.svc.meta.stateless or false;
 
   # Two definitions of the same underlying service both want subdomain
   # `nextcloud`, dataset `safe/nextcloud` and the sops key
@@ -216,6 +234,36 @@ in
       '';
     };
 
+    state = lib.mkOption {
+      default = { };
+      description = ''
+        Where each service keeps state that cannot be rebuilt from the flake.
+
+        A service sets its own entry. The mechanism turns each one into a
+        dataset under `safe/`, so it is covered by the pre-switch snapshot.
+      '';
+      type = lib.types.attrsOf (
+        lib.types.submodule {
+          options = {
+            path = lib.mkOption {
+              type = lib.types.str;
+              description = "Directory holding the state.";
+            };
+            owner = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "User that must be able to write it.";
+            };
+            group = lib.mkOption {
+              type = lib.types.nullOr lib.types.str;
+              default = null;
+              description = "Group that must be able to write it.";
+            };
+          };
+        }
+      );
+    };
+
     resolved = lib.mkOption {
       type = lib.types.listOf (lib.types.attrsOf lib.types.unspecified);
       readOnly = true;
@@ -250,6 +298,18 @@ in
         message = p;
       }) problems
       ++ [
+        {
+          assertion =
+            zfsPool == null
+            || builtins.all (s: declaresState s || stateless s) enabled;
+          message = "ryra.services: ${
+            lib.concatStringsSep ", " (
+              map (s: s.qualified) (
+                builtins.filter (s: !(declaresState s) && !(stateless s)) enabled
+              )
+            )
+          } does not say where its state lives. Set `ryra.services.state.<name>` in the service module, or `meta.stateless = true` if it genuinely keeps nothing on disk. Guessing would mean a service whose data quietly lands outside any snapshot.";
+        }
         {
           assertion = duplicates == [ ];
           message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Two services with one name would share a subdomain, a dataset and a set of sops keys. Set `name` on one of them.";
@@ -300,26 +360,18 @@ in
       );
     }
 
-    # One dataset per stateful service, read from the service's own `mount`
-    # output rather than from a path repeated in the manifest. Under safe/ so
-    # the pre-switch snapshot covers it; rebuildable state does not belong
-    # here.
+    # One dataset per service that declared state. Under safe/ so the
+    # pre-switch snapshot covers it; rebuildable state does not belong here.
     (lib.mkIf (zfsPool != null) {
-      shb.zfs.pools.${zfsPool}.datasets = lib.listToAttrs (
-        map (
-          s:
-          lib.nameValuePair "safe/${s.name}" (
-            {
-              enable = true;
-              inherit ((optionsOf s).mount) path;
-            }
-            // lib.optionalAttrs ((optionsOf s).mount ? owner) {
-              inherit ((optionsOf s).mount) owner;
-              group = (optionsOf s).mount.group or (optionsOf s).mount.owner;
-            }
-          )
-        ) (builtins.filter stateful enabled)
-      );
+      shb.zfs.pools.${zfsPool}.datasets = lib.mapAttrs (
+        n: st:
+        {
+          enable = true;
+          inherit (st) path;
+        }
+        // lib.optionalAttrs (st.owner != null) { inherit (st) owner; }
+        // lib.optionalAttrs (st.group != null) { inherit (st) group; }
+      ) (lib.mapAttrs' (n: v: lib.nameValuePair "safe/${n}" v) config.ryra.services.state);
     })
   ];
 }
