@@ -1,9 +1,12 @@
-# What a tool can know about this service without evaluating any Nix.
+# What tooling can know about this service without evaluating any Nix.
 #
 # `ryra search` reads a folder; it does not instantiate a NixOS configuration.
-# Everything here is therefore duplicated-by-design from service.nix, and the
-# duplication is the point: the alternative is a registry you cannot list
-# without a working nixpkgs and thirty seconds of evaluation.
+# Facts here are therefore duplicated from service.nix on purpose. The rule for
+# which facts: anything the MECHANISM needs before it can import the module
+# (option-root, shb-module), plus anything a human or an agent needs in order
+# to choose the service at all. Never a value the module already computes:
+# the data directory comes from the module's `mount` output, so it is not here
+# and cannot drift.
 
 [service]
 name = "nextcloud"
@@ -11,34 +14,44 @@ summary = "Files, calendar and contacts"
 category = "productivity"
 url = "https://nextcloud.com"
 
-# The selfhostblocks module that implements this. The mechanism imports it, so
-# the host's SHB import list does not grow per service.
+# Where this service's options live. NOT derivable from anything else:
+# selfhostblocks' nextcloud-server.nix declares `shb.nextcloud`, and the
+# mechanism reaches <option-root>.backup and <option-root>.mount to wire the
+# restic instance and the ZFS dataset.
+option-root = ["shb", "nextcloud"]
+
+# The selfhostblocks module implementing this. A registry entry is allowed to
+# be a thin wiring of an upstream module, and should be: the rule we inherit
+# from SHB is "the smallest amount of code above what already exists". Drop
+# this key when the entry stops needing it, and nothing at the host changes.
 shb-module = "nextcloud-server"
 
-# Owns data that cannot be rebuilt from the flake, so it gets its own dataset
-# on safe/ and is covered by the pre-switch snapshot.
+# Contracts this service takes part in. The mechanism reads these to decide
+# what to wire; they are not documentation.
+ssl = true
+backup = true
 stateful = true
-dataDir = "/var/lib/nextcloud"
 owner = "nextcloud"
 group = "nextcloud"
 
-# Contracts. `needs` is what the host must already provide for this service to
-# evaluate; `provides` is what it offers others, so that "who is the OIDC
-# provider" is resolved by role rather than hardcoded to a name.
+# Blocks the host must already have configured for this to evaluate. Checked
+# by nothing yet: this is the list an agent reads before adding the service, so
+# it fails while writing the config rather than at the end of a rebuild.
 needs = ["ssl", "secrets", "backup", "ldap", "oidc", "postgresql"]
 provides = []
 
 # Secrets this service requests, as sops keys. Documentation only: the
 # authority is the `.request` lines in service.nix, which the module system
-# checks. This list exists so `ryra add` can tell you what to put in
-# secrets.yaml before the first rebuild fails.
+# checks. This exists so the keys can be put in secrets.yaml BEFORE the first
+# rebuild fails on a missing one.
 [secrets]
 "nextcloud/adminpass" = "Nextcloud admin account password"
 "nextcloud/sso/secret" = "OIDC client secret, shared with Authelia"
-"restic/nextcloud" = "Restic repository passphrase"
+"restic/nextcloud" = "Restic repository passphrase (requested by the mechanism)"
 
 # Two logical secrets that must resolve to ONE value, via `settings.key`.
-# Getting these wrong produces a service that starts cleanly and cannot log in.
+# Generating independent values for these produces a service that starts
+# cleanly, passes every health check, and cannot log anybody in.
 [secrets.aliases]
 "nextcloud/ldap_admin_password" = "lldap/user_password"
 "authelia/nextcloud_sso_secret" = "nextcloud/sso/secret"
