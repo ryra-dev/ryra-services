@@ -73,49 +73,65 @@ let
   # Purely syntactic, and it never falls back. An unknown namespace is an
   # error, not a search across the other registries: adding a registry must not
   # be able to change what an existing name already means.
+  #
+  # Returns a value rather than throwing, so that three bad names produce three
+  # complaints in one evaluation instead of one complaint three times. Same
+  # reason `.#validate` returns a list: this is read by agents, and a stack
+  # trace naming the first casualty is the least useful shape available.
   parse =
     qualified:
     let
       parts = lib.splitString "/" qualified;
+      registry = builtins.elemAt parts 0;
       have = lib.concatStringsSep ", " (builtins.attrNames registries);
     in
     if builtins.length parts != 2 then
-      throw "ryra.services: `${qualified}` is not a qualified name. Write `<registry>/<service>`, for example `ryra/${qualified}`."
-    else if !(registries ? ${builtins.elemAt parts 0}) then
-      throw "ryra.services: no registry named `${builtins.elemAt parts 0}`. Registries available here: ${have}."
+      {
+        ok = false;
+        problem = "`${qualified}` is not a qualified name. Write `<registry>/<service>`, for example `ryra/${qualified}`.";
+      }
+    else if !(registries ? ${registry}) then
+      {
+        ok = false;
+        problem = "no registry named `${registry}`. Registries available here: ${have}.";
+      }
     else
       {
-        registry = builtins.elemAt parts 0;
+        ok = true;
+        problem = null;
+        inherit registry;
         service = builtins.elemAt parts 1;
       };
 
-  # Everything known about one enabled service, resolved once.
+  # Everything known about one enabled service WITHOUT LOOKING AT `config`.
+  #
+  # That restriction is the whole reason this function is shaped like it is.
+  # `imports` is evaluated before the module fixpoint exists, so anything it
+  # touches must be derivable from the flake alone. Facts that need `config`
+  # are deliberately NOT in here: see `wire` below. Mixing the two in one
+  # attrset would leave `imports = filter (s: s.backsUp) enabled` looking
+  # perfectly reasonable and blowing the evaluator's stack, with laziness the
+  # only thing standing between the two.
   #
   # Read from the registry's FLAKE OUTPUT, not from a file beside the module.
-  # There is no manifest to disagree with the definition, and anything the
-  # module can answer for itself is asked of the module rather than declared
-  # twice.
+  # There is no manifest to disagree with the definition.
   resolve =
     qualified: opts:
     let
       ref = parse qualified;
-      registry = registries.${ref.registry};
-      svc =
-        registry.ryraServices.${ref.service} or (throw
-          "ryra.services: registry `${ref.registry}` has no service `${ref.service}`. It offers: ${
-            lib.concatStringsSep ", " (builtins.attrNames (registry.ryraServices or { }))
-          }.");
+      registry = if ref.ok then registries.${ref.registry} else null;
+      svc = if ref.ok then registry.ryraServices.${ref.service} or null else null;
 
       # The running thing is named for the SERVICE, not for the registry that
       # defined it. `ryra-nextcloud.tailnet.ts.net` would be absurd as a URL,
       # and moving a definition between registries must not rewrite the data
       # paths under a live box.
-      name = opts.name or ref.service;
+      name = opts.name or ref.service or qualified;
     in
-    rec {
-      inherit qualified name;
-      inherit (ref) registry service;
-      inherit (svc) meta module;
+    {
+      inherit qualified name svc ref;
+      registry = ref.registry or null;
+      service = ref.service or null;
 
       subdomain = opts.subdomain or name;
       settings = opts.settings or { };
@@ -123,20 +139,40 @@ let
       # Where the service's options live. NOT derivable: selfhostblocks'
       # nextcloud-server.nix declares shb.nextcloud, and the mechanism must
       # reach <optionRoot>.backup and <optionRoot>.mount to wire anything.
-      optionRoot = meta.optionRoot;
-      options = getAttrFromPath optionRoot config;
-
-      shbModule = meta.shbModule or null;
-
-      # Asked of the module, not declared in metadata. A service backs up if it
-      # exposes a backup requester; it is stateful if it says where its state
-      # lives. Neither fact can drift out of step with the module, because
-      # neither is written down twice.
-      backsUp = options ? backup;
-      stateful = options ? mount;
+      optionRoot = svc.meta.optionRoot or null;
+      shbModule = svc.meta.shbModule or null;
     };
 
-  enabled = mapAttrsToList resolve services;
+  resolved = mapAttrsToList resolve services;
+
+  # Every complaint about the enable list, gathered before anything is wired.
+  problems =
+    map (s: "ryra.services: ${s.ref.problem}") (builtins.filter (s: !s.ref.ok) resolved)
+    ++ map (
+      s:
+      "ryra.services: registry `${s.registry}` has no service `${s.service}`. It offers: ${
+        lib.concatStringsSep ", " (builtins.attrNames (registries.${s.registry}.ryraServices or { }))
+      }."
+    ) (builtins.filter (s: s.ref.ok && s.svc == null) resolved)
+    ++ map (
+      s: "ryra.services: `${s.qualified}` has no `meta.optionRoot`, so nothing can be wired to it."
+    ) (builtins.filter (s: s.svc != null && s.optionRoot == null) resolved);
+
+  # Only sound entries reach the wiring. A broken one would otherwise produce a
+  # second, uglier failure on top of the assertion that already explains it.
+  enabled = builtins.filter (s: s.svc != null && s.optionRoot != null) resolved;
+
+  # The other half: a service seen THROUGH the evaluated config. Only legal
+  # inside `config`, which is exactly where these are used, and unavailable
+  # anywhere else because they are not attributes of a resolved service.
+  optionsOf = s: getAttrFromPath s.optionRoot config;
+
+  # Asked of the module, not declared in metadata. A service backs up if it
+  # exposes a backup requester; it is stateful if it says where its state
+  # lives. Neither fact can drift out of step with the module, because neither
+  # is written down twice.
+  backsUp = s: (optionsOf s) ? backup;
+  stateful = s: (optionsOf s) ? mount;
 
   # Two definitions of the same underlying service both want subdomain
   # `nextcloud`, dataset `safe/nextcloud` and the sops key
@@ -162,7 +198,7 @@ in
     )
     ++ map (
       s:
-      s.module {
+      s.svc.module {
         inherit (s) name subdomain settings;
         inherit domain contracts;
         ssl = if sslFor == null then null else sslFor s.name;
@@ -205,7 +241,15 @@ in
           ;
       }) enabled;
 
-      assertions = [
+      # Every complaint reaches the user in one pass. NixOS gathers failed
+      # assertions and reports them together, which is the same shape as
+      # `.#validate` and for the same reason: fixing three mistakes should take
+      # one rebuild, not three.
+      assertions = map (p: {
+        assertion = false;
+        message = p;
+      }) problems
+      ++ [
         {
           assertion = duplicates == [ ];
           message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Two services with one name would share a subdomain, a dataset and a set of sops keys. Set `name` on one of them.";
@@ -229,7 +273,7 @@ in
         map (
           s:
           lib.nameValuePair s.name {
-            request = s.options.backup.request;
+            request = (optionsOf s).backup.request;
             settings = {
               enable = true;
               passphrase.result = config.shb.sops.secret."restic/${s.name}".result;
@@ -243,7 +287,7 @@ in
               retention = backupRetention;
             };
           }
-        ) (builtins.filter (s: s.backsUp) enabled)
+        ) (builtins.filter backsUp enabled)
       );
 
       shb.sops.secret = lib.listToAttrs (
@@ -252,7 +296,7 @@ in
           lib.nameValuePair "restic/${s.name}" {
             request = config.shb.restic.instances.${s.name}.settings.passphrase.request;
           }
-        ) (builtins.filter (s: s.backsUp) enabled)
+        ) (builtins.filter backsUp enabled)
       );
     }
 
@@ -267,14 +311,14 @@ in
           lib.nameValuePair "safe/${s.name}" (
             {
               enable = true;
-              inherit (s.options.mount) path;
+              inherit ((optionsOf s).mount) path;
             }
-            // lib.optionalAttrs (s.options.mount ? owner) {
-              inherit (s.options.mount) owner;
-              group = s.options.mount.group or s.options.mount.owner;
+            // lib.optionalAttrs ((optionsOf s).mount ? owner) {
+              inherit ((optionsOf s).mount) owner;
+              group = (optionsOf s).mount.group or (optionsOf s).mount.owner;
             }
           )
-        ) (builtins.filter (s: s.stateful) enabled)
+        ) (builtins.filter stateful enabled)
       );
     })
   ];
