@@ -43,8 +43,18 @@
     ];
     provides = [ ];
 
+    # FLAT, and prefixed with the service rather than separated by a slash.
+    #
+    # A `/` is how sops-nix spells a path INTO a yaml document, so a key written `linkding/admin`
+    # is looked for as a nested `linkding:` then `admin:`. The files Ryra renders are flat: a
+    # record's name becomes one yaml key, slash and all. So the slashed spelling produced a deploy
+    # that reported success and a machine that failed activation hunting a key that was there,
+    # spelled differently.
+    #
+    # Prefixing sidesteps the question rather than answering it, and costs nothing: record names
+    # are unique per vault already.
     secrets = {
-      "linkding/admin" = "Env file holding LD_SUPERUSER_NAME and LD_SUPERUSER_PASSWORD";
+      "linkding-admin" = "Env file holding LD_SUPERUSER_NAME and LD_SUPERUSER_PASSWORD";
     };
     secretAliases = { };
   };
@@ -164,8 +174,8 @@
         # The secret this service needs. WHICH secrets a service wants is its
         # own business; where they come from is not, which is why this names a
         # sops key and not a file.
-        shb.sops.secret."${name}/admin".request = cfg.adminCredentials.request;
-        ryra.${name}.adminCredentials.result = config.shb.sops.secret."${name}/admin".result;
+        shb.sops.secret."${name}-admin".request = cfg.adminCredentials.request;
+        ryra.${name}.adminCredentials.result = config.shb.sops.secret."${name}-admin".result;
       };
     };
 }

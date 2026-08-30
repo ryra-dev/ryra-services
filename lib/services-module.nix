@@ -336,7 +336,7 @@ in
             request = (optionsOf s).backup.request;
             settings = {
               enable = true;
-              passphrase.result = config.shb.sops.secret."restic/${s.name}".result;
+              passphrase.result = config.shb.sops.secret."restic-${s.name}".result;
               repository = {
                 path = "${backupRoot}/${s.name}";
                 timerConfig = {
@@ -353,7 +353,10 @@ in
       shb.sops.secret = lib.listToAttrs (
         map (
           s:
-          lib.nameValuePair "restic/${s.name}" {
+          # Flat, and prefixed, for the reason every key in this registry is: a `/` is how
+          # sops-nix spells a path INTO a yaml document, and the files Ryra renders are flat, so
+          # a slashed name is looked for nested and never found.
+          lib.nameValuePair "restic-${s.name}" {
             request = config.shb.restic.instances.${s.name}.settings.passphrase.request;
           }
         ) (builtins.filter backsUp enabled)

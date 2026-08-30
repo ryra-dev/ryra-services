@@ -56,16 +56,16 @@
     # the keys can go into secrets.yaml BEFORE a rebuild fails on a missing
     # one.
     secrets = {
-      "nextcloud/adminpass" = "Nextcloud admin account password";
-      "nextcloud/sso/secret" = "OIDC client secret, shared with Authelia";
+      "nextcloud-adminpass" = "Nextcloud admin account password";
+      "nextcloud-sso-secret" = "OIDC client secret, shared with Authelia";
     };
 
     # Two logical secrets that must resolve to ONE value, via `settings.key`.
     # Generating independent values for these produces a service that starts
     # cleanly, passes every health check, and cannot log anybody in.
     secretAliases = {
-      "nextcloud/ldap_admin_password" = "lldap/user_password";
-      "authelia/nextcloud_sso_secret" = "nextcloud/sso/secret";
+      "nextcloud-ldap_admin_password" = "lldap-user_password";
+      "authelia-nextcloud_sso_secret" = "nextcloud-sso-secret";
     };
   };
 
@@ -97,7 +97,7 @@
         # Contract: nextcloud declares it needs a secret, sops provides it. The
         # mechanism does not write these, because WHICH secrets a service needs
         # is the service's own business.
-        adminPass.result = config.shb.sops.secret."${name}/adminpass".result;
+        adminPass.result = config.shb.sops.secret."${name}-adminpass".result;
 
         # Users come from LLDAP rather than Nextcloud's own account list.
         apps.ldap = {
@@ -106,7 +106,7 @@
           port = config.shb.lldap.ldapPort;
           dcdomain = config.shb.lldap.dcdomain;
           adminName = "admin";
-          adminPassword.result = config.shb.sops.secret."${name}/ldap_admin_password".result;
+          adminPassword.result = config.shb.sops.secret."${name}-ldap_admin_password".result;
           userGroup = "${name}_user";
         };
 
@@ -120,8 +120,8 @@
           clientID = name;
           fallbackDefaultAuth = true;
 
-          secret.result = config.shb.sops.secret."${name}/sso/secret".result;
-          secretForAuthelia.result = config.shb.sops.secret."authelia/${name}_sso_secret".result;
+          secret.result = config.shb.sops.secret."${name}-sso-secret".result;
+          secretForAuthelia.result = config.shb.sops.secret."authelia-${name}_sso_secret".result;
         };
       };
 
@@ -135,19 +135,19 @@
         group = "nextcloud";
       };
 
-      shb.sops.secret."${name}/adminpass".request = config.shb.nextcloud.adminPass.request;
-      shb.sops.secret."${name}/sso/secret".request = config.shb.nextcloud.apps.sso.secret.request;
+      shb.sops.secret."${name}-adminpass".request = config.shb.nextcloud.adminPass.request;
+      shb.sops.secret."${name}-sso-secret".request = config.shb.nextcloud.apps.sso.secret.request;
 
       # Both of these must hold the SAME value as the secret they point at:
       # Nextcloud binds to LLDAP as its admin user, and Nextcloud and Authelia
       # must agree on one OIDC client secret. `settings.key` is the alias.
-      shb.sops.secret."${name}/ldap_admin_password" = {
+      shb.sops.secret."${name}-ldap_admin_password" = {
         request = config.shb.nextcloud.apps.ldap.adminPassword.request;
-        settings.key = "lldap/user_password";
+        settings.key = "lldap-user_password";
       };
-      shb.sops.secret."authelia/${name}_sso_secret" = {
+      shb.sops.secret."authelia-${name}_sso_secret" = {
         request = config.shb.nextcloud.apps.sso.secretForAuthelia.request;
-        settings.key = "${name}/sso/secret";
+        settings.key = "${name}-sso-secret";
       };
     };
 }
