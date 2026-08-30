@@ -16,12 +16,37 @@
       # Every directory under ./services is a service. Adding one is creating a
       # folder; there is no list to keep in step, and therefore no way to add a
       # service and forget to register it.
-      names = builtins.attrNames (builtins.readDir ./services);
+      #
+      # DIRECTORIES, filtered by type. `builtins.readDir` hands back every entry including plain
+      # files, and this took all of them: `import ./services/config.toml` is not a nix expression
+      # and brings the whole registry down with it.
+      #
+      # It has been fine only because that file is untracked, and nix copies just the tracked
+      # ones out of a dirty tree. So `git add` was the whole distance between working and a flake
+      # that would not evaluate for anybody, and the comment above already said what the code
+      # should have done.
+      #
+      # `builtins` rather than `lib.filterAttrs` because this flake takes no inputs on purpose:
+      # a registry describes services, it does not pin the world they run in.
+      entries = builtins.readDir ./services;
+      names = builtins.filter (n: entries.${n} == "directory") (builtins.attrNames entries);
     in
     {
       # The mechanism: turns an enable list into imported aspects,
       # certificates, backups and datasets.
       nixosModules.services = import ./lib/services-module.nix;
+
+      # A design, ready to evaluate: `nix flake init -t <this flake>`.
+      #
+      # Here rather than in a tool, because nix already has templates and a
+      # scaffolding command of our own would be a worse copy of one that
+      # exists. Beside the registry rather than in a client, because the five
+      # numbered comments in it are facts about THIS mechanism and go stale
+      # with it.
+      templates.default = {
+        path = ./templates/design;
+        description = "A design: one repo describing one or more machines";
+      };
 
       # THE REGISTRY IS A FLAKE OUTPUT, AND THAT OUTPUT IS THE SOURCE OF TRUTH.
       #
