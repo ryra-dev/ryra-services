@@ -1,35 +1,10 @@
-# linkding: a self-hosted bookmark manager.
-#
-# THIS IS A FULL ENTRY, not a thin wiring of somebody else's module. Self Host
-# Blocks does not ship linkding, so the contract requesters below are written
-# here rather than inherited: this is the file that proves our contracts work
-# as AUTHORED and not merely as consumed.
-#
-# It follows SHB's conventions closely on purpose, because a full entry is the
-# thing most likely to want upstreaming later, and because matching an existing
-# vocabulary is worth more than a marginally nicer one of our own:
-#
-#   - options live under one namespace with an `enable` gate
-#   - `subdomain`/`domain` rather than a single `fqdn`
-#   - `ssl` is `nullOr <the ssl contract>`, default null
-#   - the app binds 127.0.0.1 and nginx terminates TLS; the app never sees a
-#     certificate
-#   - secrets are contract requesters carrying their intended ownership, never
-#     a bare path
-#
-# The rule inherited from SHB, and it is the one that keeps this file short:
-# "the smallest amount of code above what is available in nixpkgs". Everything
-# here is contract integration. Nothing reimplements what
-# `services.linkding` already does.
+# Linkding bookmark manager, using the native NixOS service and Ryra contracts.
 {
   meta = {
     summary = "Bookmark manager";
     category = "productivity";
     url = "https://linkding.link";
 
-    # Ours, so it lives under `ryra`, and there is no selfhostblocks module to
-    # name. This is the path the mechanism takes for a service SHB does not
-    # ship.
     optionRoot = [
       "ryra"
       "linkding"
@@ -55,6 +30,15 @@
     # are unique per vault already.
     secrets = {
       "linkding-admin" = "Env file holding LD_SUPERUSER_NAME and LD_SUPERUSER_PASSWORD";
+      "restic-linkding" = {
+        purpose = "Encryption password for linkding's backup repository";
+        owner = "linkding";
+        restart = [ "restic-backups-linkding.service" ];
+        generate = {
+          format = "base64";
+          bytes = 32;
+        };
+      };
     };
     secretAliases = { };
   };

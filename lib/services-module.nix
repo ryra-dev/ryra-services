@@ -1,34 +1,12 @@
-# The mechanism: turn a list of qualified service names into a NixOS config.
-#
-# THE POINT OF THIS FILE. Self Host Blocks has no matching engine, on purpose:
-# every contract connection there is two manual assignments, and its own docs
-# own that as a design choice. That is correct for a library and miserable for
-# a registry. Roughly sixty of the hundred lines in a hand-written service
-# aspect are the same plumbing every time: request a certificate, request a
-# restic repository, request the passphrase for that repository, carve a
-# dataset for the data directory. This file writes all of it, so a service
-# definition contains only what is true about that service.
-#
-# This is a FUNCTION returning a module, not a module. Forced by the module
-# system: `imports` may not depend on `config`, so an enable list read from an
-# option could never decide which files to pull in.
-#
-# Written for agents first. Every failure below is an eval-time assertion that
-# says what to do about it, because the alternative is an agent discovering the
-# problem as two systemd units fighting over a directory on a live box.
+# Turn qualified service names into modules, certificates, backups and state.
+# This function returns a module because imports cannot depend on config.
 {
   # Registry name -> path to a registry root. The key is the namespace:
   # `{ ryra = ...; acme = ...; }` makes "ryra/nextcloud" and "acme/nextcloud"
   # both addressable, and distinct.
   registries,
 
-  # The host's selfhostblocks flake, or null.
-  #
-  # We own the contracts; SHB still owns most service IMPLEMENTATIONS, and a
-  # registry entry is allowed to be a thin wiring of one. Our contracts are
-  # structurally identical to SHB's, so they typecheck straight into its
-  # modules. When an entry stops needing SHB it drops `shb-module` from its
-  # manifest and nothing at the host changes.
+  # Optional upstream application modules, pinned by the host.
   selfhostblocks ? null,
 
   # Services to run, keyed by QUALIFIED name: "ryra/nextcloud".
@@ -38,19 +16,59 @@
   # `nextcloud = { }` answers "from where?" only by knowing an unwritten rule.
   services,
 
-  # The DNS suffix every service hangs off: a tailnet's MagicDNS suffix.
-  domain,
+  # The DNS suffix web services hang off: a tailnet's MagicDNS suffix. A
+  # machine containing only local tools and loopback services needs none.
+  domain ? null,
 
   # name -> the ssl contract for that name. The host owns this because the
-  # provider is a host decision: Tailscale here, ACME elsewhere.
+  # provider is a host decision: Tailscale here, ACME elsewhere. It is only
+  # called for entries whose metadata names `ssl`; a loopback-only service can
+  # therefore run on a machine with no certificate provider at all.
   sslFor ? null,
 
   # ZFS pool to carve per-service datasets out of, or null to manage none.
   zfsPool ? null,
 
-  # Where restic repositories live, and how often they run. Defaulted once
-  # here rather than copy-pasted into every service definition.
+  # A module consuming `ryra.services.state`. Kept separate from the service
+  # compositor so a Btrfs host does not need ZFS options. `zfsPool` selects
+  # the compatibility provider for existing hosts.
+  stateProvider ? (
+    if zfsPool == null then null else import ./state-providers/zfs.nix { inherit zfsPool; }
+  ),
+
+  # Backwards-compatible local destination for the default Restic provider.
+  # A Ryra organization normally overrides `backupRepositoryFor` below with
+  # its default storage target; keeping this argument means existing hosts do
+  # not move repositories merely by updating the registry.
   backupRoot ? "/srv/backups",
+
+  # name -> {
+  #   path;
+  #   environmentFile ? null;
+  #   credentialService ? null;
+  # }
+  #
+  # This is the seam between an organization's default storage and the backup
+  # implementation. `path` may be a local path, SFTP URL or S3/R2 URL;
+  # `environmentFile` carries provider credentials in the format NixOS's
+  # Restic module accepts. The repository encryption passphrase is separate
+  # and remains in the organization's vault.
+  backupRepositoryFor ? (name: { path = "${backupRoot}/${name}"; }),
+
+  # null uses a generated `sops.secrets.restic-<name>` from the organization
+  # vault. Another vault provider supplies `name: <password-file-path>`.
+  backupPasswordFileFor ? null,
+
+  # A module implementing `ryra.services.backup.requests -> results`. Restic
+  # remains the default, but replacing it no longer changes this compositor or
+  # any service definition.
+  backupProvider ? (import ./backup-providers/restic.nix {
+    repositoryFor = backupRepositoryFor;
+    passwordFileFor = backupPasswordFileFor;
+    onCalendar = backupOnCalendar;
+    retention = backupRetention;
+  }),
+
   backupOnCalendar ? "hourly",
   backupRetention ? {
     keep_within = "1d";
@@ -61,7 +79,7 @@
   },
 }:
 
-{ config, lib, ... }:
+{ config, lib, options, ... }:
 
 let
   inherit (lib) mkMerge mapAttrsToList getAttrFromPath;
@@ -136,15 +154,10 @@ let
       subdomain = opts.subdomain or name;
       settings = opts.settings or { };
 
-      # Host-side overrides for the generated dataset. Needed because a
-      # service's `mount` is not obliged to say who owns the files: SHB's
-      # contract is `{ path }` and nothing more, so a host that carves ZFS
-      # datasets has to be able to supply the rest.
+      # Optional ownership overrides for generated datasets.
       dataset = opts.dataset or { };
 
-      # Where the service's options live. NOT derivable: selfhostblocks'
-      # nextcloud-server.nix declares shb.nextcloud, and the mechanism must
-      # reach <optionRoot>.backup and <optionRoot>.mount to wire anything.
+      # Option namespace used to connect the service to its providers.
       optionRoot = svc.meta.optionRoot or null;
       shbModule = svc.meta.shbModule or null;
     };
@@ -171,29 +184,30 @@ let
   # The other half: a service seen THROUGH the evaluated config. Only legal
   # inside `config`, which is exactly where these are used, and unavailable
   # anywhere else because they are not attributes of a resolved service.
-  optionsOf = s: getAttrFromPath s.optionRoot config;
+  configOf = s: getAttrFromPath s.optionRoot config;
+  declaredOptionsOf = s: getAttrFromPath s.optionRoot options;
 
-  # Asked of the module, not declared in metadata: a service backs up if it
-  # exposes a backup requester, so that fact cannot drift out of step with the
-  # module.
-  backsUp = s: (optionsOf s) ? backup;
+  # Asked of the module's declared OPTIONS, not repeated in metadata: a service
+  # backs up if it exposes a backup requester, so that fact cannot drift out of
+  # step with the module. Inspecting `options` rather than `config` is also
+  # load-bearing now that the result is routed back to that same option: asking
+  # config whether backup exists while defining backup.result is a module
+  # fixpoint cycle.
+  backsUp = s: (declaredOptionsOf s) ? backup;
 
-  # State is NOT asked of the module, and the reason is worth writing down.
-  #
-  # `mount` would be the natural place, but only 4 of selfhostblocks' 18
-  # services implement it: nextcloud, the one this registry started with, does
-  # not. Deriving "is this stateful" from `mount` therefore means a stateful
-  # service silently gets no dataset, which is the worst failure available
-  # here: everything builds, everything starts, and the data quietly lands on
-  # the parent dataset with no snapshot covering it.
-  #
-  # So a service DECLARES its state into `ryra.services.state`, which is ours
-  # and always present, and the assertion below makes forgetting an error.
+  # Unlike backup, this has to be known before evaluating the service module:
+  # `sslFor` may reach into another provider's config, while a service with no
+  # public listener should never cause that provider to be evaluated. `needs`
+  # already exists for exactly these host prerequisites, so it is the one
+  # authored fact rather than a second `public = true` flag beside it.
+  needsSsl = s: builtins.elem "ssl" (s.svc.meta.needs or [ ]);
+
+  # Stateful services declare paths explicitly; not every module exposes mount.
   declaresState = s: config.ryra.services.state ? ${s.name};
   stateless = s: s.svc.meta.stateless or false;
 
   # Two definitions of the same underlying service both want subdomain
-  # `nextcloud`, dataset `safe/nextcloud` and the sops key
+  # `nextcloud`, state name `nextcloud` and the sops key
   # `nextcloud/adminpass`. Catch it here: the alternative is two units quietly
   # fighting over /var/lib/nextcloud on a machine that is already serving.
   duplicates =
@@ -208,18 +222,22 @@ in
 {
   imports =
     lib.optionals (needsShb != [ ]) (
-      # Injects `shb` as a module arg. Without it every `shb.contracts.*`
-      # reference in an SHB service module is an undefined variable, so this is
-      # not optional the moment any entry names an shb-module.
+      # Load upstream contract helpers before the application modules.
       [ selfhostblocks.nixosModules.lib ]
       ++ map (s: selfhostblocks.nixosModules.${s.shbModule}) needsShb
     )
+    ++ lib.optionals (backupProvider != null) [ backupProvider ]
+    ++ lib.optionals (stateProvider != null) [ stateProvider ]
     ++ map (
       s:
       s.svc.module {
         inherit (s) name subdomain settings;
-        inherit domain contracts;
-        ssl = if sslFor == null then null else sslFor s.name;
+        inherit contracts;
+        # Keep the value structurally acceptable to application modules so the
+        # assertion below can give the useful error when a web service omitted
+        # its domain. Local-only modules never inspect it.
+        domain = if domain == null then "" else domain;
+        ssl = if sslFor != null && needsSsl s then sslFor s.name else null;
       }
     ) enabled;
 
@@ -228,9 +246,17 @@ in
       type = lib.types.listOf lib.types.str;
       readOnly = true;
       description = ''
-        The unqualified name of every enabled service. The host reads this to
-        issue one certificate per service, so the certificate list cannot drift
-        out of step with the service list.
+        The unqualified name of every enabled service, including local-only
+        services and command-line tools.
+      '';
+    };
+
+    certificateNames = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      readOnly = true;
+      description = ''
+        Enabled services that request SSL. A host derives certificates from
+        this list, so a loopback-only service neither gets nor requires one.
       '';
     };
 
@@ -239,8 +265,9 @@ in
       description = ''
         Where each service keeps state that cannot be rebuilt from the flake.
 
-        A service sets its own entry. The mechanism turns each one into a
-        dataset under `safe/`, so it is covered by the pre-switch snapshot.
+        A service sets its own entry. A machine state provider may turn these
+        into individual datasets; the Btrfs base instead snapshots the parent
+        `/var/lib` subvolume before every switch.
       '';
       type = lib.types.attrsOf (
         lib.types.submodule {
@@ -264,6 +291,35 @@ in
       );
     };
 
+    backup = {
+      requests = lib.mkOption {
+        type = lib.types.attrsOf contracts.backup.contract.request.type;
+        default = { };
+        internal = true;
+        description = ''
+          Backup requests keyed by running service name. A backup provider
+          consumes these without knowing where each service's options live.
+        '';
+      };
+
+      results = lib.mkOption {
+        type = lib.types.attrsOf contracts.backup.contract.result.type;
+        default = { };
+        internal = true;
+        description = ''
+          Provider results keyed by running service name. The mechanism wires
+          each result back to the service that made the request.
+        '';
+      };
+
+      onCalendar = lib.mkOption {
+        type = lib.types.attrsOf lib.types.str;
+        default = { };
+        internal = true;
+        description = "Per-service backup schedule overrides.";
+      };
+    };
+
     resolved = lib.mkOption {
       type = lib.types.listOf (lib.types.attrsOf lib.types.unspecified);
       readOnly = true;
@@ -280,6 +336,7 @@ in
   config = mkMerge [
     {
       ryra.services.names = map (s: s.name) enabled;
+      ryra.services.certificateNames = map (s: s.name) (builtins.filter needsSsl enabled);
       ryra.services.resolved = map (s: {
         inherit (s)
           qualified
@@ -300,7 +357,7 @@ in
       ++ [
         {
           assertion =
-            zfsPool == null
+            stateProvider == null
             || builtins.all (s: declaresState s || stateless s) enabled;
           message = "ryra.services: ${
             lib.concatStringsSep ", " (
@@ -308,73 +365,62 @@ in
                 builtins.filter (s: !(declaresState s) && !(stateless s)) enabled
               )
             )
-          } does not say where its state lives. Set `ryra.services.state.<name>` in the service module, or `meta.stateless = true` if it genuinely keeps nothing on disk. Guessing would mean a service whose data quietly lands outside any snapshot.";
+          } does not say where its state lives. Set `ryra.services.state.<name>` in the service module, or `meta.stateless = true` if it genuinely keeps nothing on disk. A state provider cannot protect a path it has to guess.";
         }
         {
           assertion = duplicates == [ ];
-          message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Two services with one name would share a subdomain, a dataset and a set of sops keys. Set `name` on one of them.";
+          message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Two services with one name would share a subdomain, state entry, backup repository and sops keys. Set `name` on one of them.";
         }
         {
           assertion = needsShb == [ ] || selfhostblocks != null;
           message = "ryra.services: ${(builtins.head needsShb).qualified} is implemented by the selfhostblocks module `${(builtins.head needsShb).shbModule}`, but no `selfhostblocks` was passed to the mechanism. Pass the host's flake input.";
         }
         {
-          assertion = sslFor != null || enabled == [ ];
-          message = "ryra.services: services are enabled but `sslFor` is null, so none of them can be given a certificate. Pass a provider, for example `sslFor = name: config.ryra.tailscale.certs.\${name};`.";
+          assertion = domain != null || builtins.filter needsSsl enabled == [ ];
+          message = "ryra.services: ${
+            lib.concatStringsSep ", " (map (s: s.qualified) (builtins.filter needsSsl enabled))
+          } requests SSL but `domain` is null. Pass the DNS suffix its URL uses.";
+        }
+        {
+          assertion = sslFor != null || builtins.filter needsSsl enabled == [ ];
+          message = "ryra.services: ${
+            lib.concatStringsSep ", " (map (s: s.qualified) (builtins.filter needsSsl enabled))
+          } requests SSL but `sslFor` is null. Pass a provider, for example `sslFor = name: config.ryra.tailscale.certs.\${name};`.";
+        }
+        {
+          assertion = backupProvider != null || builtins.filter backsUp enabled == [ ];
+          message = "ryra.services: a service requests backups but `backupProvider` is null. Pass a module that consumes `ryra.services.backup.requests` and provides matching `ryra.services.backup.results`.";
         }
       ];
     }
 
-    # Backup. The requester already knows what to back up and as which user, so
-    # a provider only supplies a repository and a schedule: that is the entire
-    # reason no service definition in this registry mentions restic.
+    # Provider-neutral backup bus. Services publish requests here; the selected
+    # provider publishes results; those results are then returned to the exact
+    # requester option that originated them.
     {
-      shb.restic.instances = lib.listToAttrs (
+      ryra.services.backup.requests = lib.listToAttrs (
         map (
           s:
-          lib.nameValuePair s.name {
-            request = (optionsOf s).backup.request;
-            settings = {
-              enable = true;
-              passphrase.result = config.shb.sops.secret."restic-${s.name}".result;
-              repository = {
-                path = "${backupRoot}/${s.name}";
-                timerConfig = {
-                  OnCalendar = s.settings.backupOnCalendar or backupOnCalendar;
-                  RandomizedDelaySec = "5m";
-                };
-              };
-              retention = backupRetention;
-            };
-          }
+          lib.nameValuePair s.name (configOf s).backup.request
         ) (builtins.filter backsUp enabled)
       );
 
-      shb.sops.secret = lib.listToAttrs (
+      ryra.services.backup.onCalendar = lib.listToAttrs (
         map (
           s:
-          # Flat, and prefixed, for the reason every key in this registry is: a `/` is how
-          # sops-nix spells a path INTO a yaml document, and the files Ryra renders are flat, so
-          # a slashed name is looked for nested and never found.
-          lib.nameValuePair "restic-${s.name}" {
-            request = config.shb.restic.instances.${s.name}.settings.passphrase.request;
-          }
+          lib.nameValuePair s.name (s.settings.backupOnCalendar or backupOnCalendar)
         ) (builtins.filter backsUp enabled)
       );
     }
 
-    # One dataset per service that declared state. Under safe/ so the
-    # pre-switch snapshot covers it; rebuildable state does not belong here.
-    (lib.mkIf (zfsPool != null) {
-      shb.zfs.pools.${zfsPool}.datasets = lib.mapAttrs (
-        n: st:
-        {
-          enable = true;
-          inherit (st) path;
-        }
-        // lib.optionalAttrs (st.owner != null) { inherit (st) owner; }
-        // lib.optionalAttrs (st.group != null) { inherit (st) group; }
-      ) (lib.mapAttrs' (n: v: lib.nameValuePair "safe/${n}" v) config.ryra.services.state);
-    })
+    (lib.mkIf (backupProvider != null) (
+      mkMerge (
+        map (
+          s:
+          lib.setAttrByPath (s.optionRoot ++ [ "backup" "result" ])
+            config.ryra.services.backup.results.${s.name}
+        ) (builtins.filter backsUp enabled)
+      )
+    ))
   ];
 }

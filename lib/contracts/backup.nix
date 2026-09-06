@@ -1,11 +1,4 @@
-# The backup contract: "these directories, as this user, are worth keeping."
-#
-# The requester knows WHAT to back up and never knows where it goes. The
-# provider knows the repository, the schedule and the retention, and never
-# knows what the files mean. That split is why the mechanism can wire restic to
-# every service in the registry without any service mentioning restic.
-#
-# Field names and types match SHB's modules/contracts/backup.nix.
+# Services declare paths and hooks; providers choose storage and scheduling.
 { lib }:
 
 let

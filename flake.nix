@@ -1,15 +1,7 @@
 {
   description = "ryra-services — a registry of self-hostable services as NixOS aspects";
 
-  # Deliberately input-free.
-  #
-  # A registry describes services; it does not pin the world they run in. The
-  # HOST owns nixpkgs and selfhostblocks and hands its selfhostblocks to the
-  # mechanism. Two revisions of SHB on one box is not a thing that can be made
-  # to work, so there is exactly one, and it is the host's.
-  #
-  # It also keeps `nix flake lock` meaningful on a consumer: updating this
-  # input moves the service definitions and nothing else.
+  # Input-free: the host pins the packages and infrastructure providers.
   outputs =
     { self }:
     let
@@ -35,6 +27,15 @@
       # The mechanism: turns an enable list into imported aspects,
       # certificates, backups and datasets.
       nixosModules.services = import ./lib/services-module.nix;
+
+      # Native NixOS Restic, translated to our provider-neutral contract. The
+      # service mechanism selects it automatically; exporting it also lets a
+      # host wrap or configure the adapter explicitly.
+      nixosModules.backup-restic = import ./lib/backup-providers/restic.nix;
+
+      # Compatibility for larger existing ZFS hosts. The low-memory base is
+      # Btrfs and gets rollback snapshots from its machine template.
+      nixosModules.state-zfs = import ./lib/state-providers/zfs.nix;
 
       # A design, ready to evaluate: `nix flake init -t <this flake>`.
       #

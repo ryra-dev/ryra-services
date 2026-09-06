@@ -1,10 +1,4 @@
-# The secret contract: "put this value in a file, owned like so, and restart
-# these units when it changes."
-#
-# Field names and types match SHB's modules/contracts/secret.nix exactly. They
-# are not ours to rename: sops-nix, SHB's hardcodedsecret and any provider we
-# write later all agree on this shape, and structural typing means a rename is
-# a silent incompatibility rather than a build error.
+# Secret file ownership, permissions and units to restart when it changes.
 { lib }:
 
 let

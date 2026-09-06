@@ -7,7 +7,7 @@ description: Operating, restoring and upgrading a ryra-managed Nextcloud.
 
 ## A restore needs two repositories, not one
 
-`shb.restic.instances.nextcloud` covers `/var/lib/nextcloud` — **files only**.
+`ryra-backup-nextcloud` covers `/var/lib/nextcloud` — **files only**.
 The database lives in the cluster-wide `pg_dumpall` taken by the postgresql
 service, in a different restic repository with a different passphrase. Restoring
 files alone gives you a Nextcloud that starts, serves a login page, and knows
@@ -18,10 +18,12 @@ restore the data directory, then `nextcloud-occ maintenance:mode --off`.
 Restoring files onto a newer database schema than they were taken with is the
 one ordering that silently half-works.
 
-Repository unit names follow restic's path-mangling, not the instance name:
+The file repository has the same provider-neutral helper as every service:
 
 ```
-restic-backups-nextcloud_srv_backups_nextcloud.service
+sudo ryra-backup-nextcloud snapshots
+sudo ryra-backup-nextcloud backup
+sudo ryra-backup-nextcloud restore <snapshot>
 ```
 
 ## Upgrade one major at a time
@@ -35,8 +37,8 @@ go again.
 
 ## The two aliased secrets
 
-`nextcloud/ldap_admin_password` and `authelia/nextcloud_sso_secret` are declared
-with `settings.key` pointing at `lldap/user_password` and `nextcloud/sso/secret`
+`nextcloud-ldap_admin_password` and `authelia-nextcloud_sso_secret` are declared
+with `settings.key` pointing at `lldap-user_password` and `nextcloud-sso-secret`
 respectively. They are not independent values: Nextcloud binds to LLDAP as its
 admin user, and Nextcloud and Authelia must agree on one OIDC client secret.
 

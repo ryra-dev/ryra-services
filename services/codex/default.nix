@@ -11,6 +11,7 @@
     url = "https://developers.openai.com/codex/cli";
 
     optionRoot = [ ];
+    stateless = true;
     needs = [ ];
     provides = [ ];
     secrets = { };

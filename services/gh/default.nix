@@ -35,6 +35,7 @@
     # for `.backup` and `.mount`, and a tool that stores nothing has neither. Present rather than
     # absent, because absent means "the author forgot" and this is a decision.
     optionRoot = [ ];
+    stateless = true;
 
     needs = [ ];
     provides = [ ];

@@ -15,6 +15,7 @@
     url = "https://claude.com/claude-code";
 
     optionRoot = [ ];
+    stateless = true;
     needs = [ ];
     provides = [ ];
     secrets = { };

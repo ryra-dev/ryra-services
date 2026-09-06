@@ -8,6 +8,7 @@
     url = "https://github.com/google-gemini/gemini-cli";
 
     optionRoot = [ ];
+    stateless = true;
     needs = [ ];
     provides = [ ];
     secrets = { };

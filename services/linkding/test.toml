@@ -42,10 +42,13 @@ action = "shell"
 name = "listens on loopback only"
 run = "ss -tlnp 2>/dev/null | grep -q '127.0.0.1:9090' && ! ss -tlnp 2>/dev/null | grep -qE '(0\\.0\\.0\\.0|\\*):9090'"
 
+# The service owns the path; whether it sits under the base Btrfs state
+# subvolume or on an optional ZFS dataset is a host-provider check, not an
+# application check.
 [[tests.checks]]
 action = "shell"
-name = "data directory is its own zfs dataset"
-run = "zfs list -H -o name | grep -qx rpool/safe/linkding"
+name = "state directory has the service ownership"
+run = "sudo test -d /var/lib/linkding && test \"$(sudo stat -c %U:%G /var/lib/linkding)\" = linkding:linkding"
 
 # The admin credentials arrived as an env file, not as a password. A secret
 # whose content is a bare string produces a service that starts and has no
@@ -53,10 +56,10 @@ run = "zfs list -H -o name | grep -qx rpool/safe/linkding"
 [[tests.checks]]
 action = "shell"
 name = "admin credentials are an env file"
-run = "sudo grep -q '^LD_SUPERUSER_NAME=' /run/secrets/linkding/admin"
+run = "sudo grep -q '^LD_SUPERUSER_NAME=' /run/secrets/linkding-admin"
 
 [[tests.checks]]
 action = "shell"
 name = "restic repository holds a snapshot"
-run = "sudo restic-backups-linkding_srv_backups_linkding exec snapshots | grep -q /var/lib/linkding"
+run = "sudo ryra-backup-linkding exec snapshots | grep -q /var/lib/linkding"
 timeout = 60

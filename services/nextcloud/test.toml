@@ -60,18 +60,18 @@ name = "oidc and ldap apps are enabled"
 run = "sudo nextcloud-occ app:list | grep -q oidc_login && sudo nextcloud-occ app:list | grep -q user_ldap"
 timeout = 60
 
-# The data directory is on its own dataset. This is the check that would have
-# caught today's near-miss: moving datasets into the registry mechanism silently
-# produced none for nextcloud, and everything still built and started.
+# The service owns the path. Btrfs protects its parent state subvolume on the
+# low-memory base; an optional ZFS provider may make this path its own dataset.
+# That provider policy belongs to a machine check rather than this service.
 [[tests.checks]]
 action = "shell"
-name = "data directory is its own zfs dataset"
-run = "zfs list -H -o name | grep -qx rpool/safe/nextcloud"
+name = "state directory has the service ownership"
+run = "sudo test -d /var/lib/nextcloud && test \"$(sudo stat -c %U:%G /var/lib/nextcloud)\" = nextcloud:nextcloud"
 
 # A backup that has never produced a snapshot is not a backup. Reads only: it
 # lists what restic already has rather than taking a new one.
 [[tests.checks]]
 action = "shell"
 name = "restic repository holds a snapshot"
-run = "sudo restic-backups-nextcloud_srv_backups_nextcloud exec snapshots | grep -q /var/lib/nextcloud"
+run = "sudo ryra-backup-nextcloud exec snapshots | grep -q /var/lib/nextcloud"
 timeout = 60

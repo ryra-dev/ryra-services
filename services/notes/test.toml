@@ -1,0 +1,32 @@
+# Read-only checks for the organization notes vault.
+
+[[tests]]
+name = "notes"
+
+[[tests.checks]]
+action = "wait"
+unit = "ryra-notes.service"
+timeout = 60
+
+# There is no vhost or certificate to test. The SSH tunnel is the only front
+# door, so listening anywhere except loopback is a security regression.
+[[tests.checks]]
+action = "shell"
+name = "sync listens on loopback only"
+run = "ss -tlnp 2>/dev/null | grep -q '127.0.0.1:7972' && ! ss -tlnp 2>/dev/null | grep -qE '(0\\.0\\.0\\.0|\\*):7972'"
+
+[[tests.checks]]
+action = "shell"
+name = "the service identity cannot log in"
+run = "getent passwd brain | cut -d: -f7 | grep -q '/nologin$'"
+
+[[tests.checks]]
+action = "shell"
+name = "vault and crdt state are both present"
+run = "sudo test -d /var/lib/notes/vault && sudo find /var/lib/notes/.ryra/notes -name .root -print -quit | grep -q ."
+
+[[tests.checks]]
+action = "shell"
+name = "restic repository holds the complete notes state"
+run = "sudo ryra-backup-notes exec snapshots | grep -q /var/lib/notes"
+timeout = 60

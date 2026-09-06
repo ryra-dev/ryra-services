@@ -1,13 +1,5 @@
-# The ssl contract: three fields, and that is genuinely all of it.
-#
-# `paths.cert`, `paths.key`, `systemdService`. Nothing about ACME, nothing
-# about Tailscale, nothing about a CA. That smallness is what let
-# `ryra.tailscale.certs.<n>` drop into `shb.nextcloud.ssl` and yield a real
-# Let's Encrypt certificate without either side knowing about the other.
-#
-# `systemdService` is the part people forget and then debug for an hour: nginx
-# must not start before the certificate exists, or it burns its restart limit
-# on a missing ssl_certificate and lands in start-limit-hit.
+# Certificate paths and the unit that creates them. Consumers must wait for
+# that unit before opening the files.
 { lib }:
 
 let

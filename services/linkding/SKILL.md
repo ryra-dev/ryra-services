@@ -51,10 +51,12 @@ favicons, previews and assets all under `/var/lib/linkding`. That is the
 restores the service completely. There is no separate database repository to
 remember, which is not true of Nextcloud.
 
-Repository unit name follows restic's path-mangling:
+The provider-neutral helper is stable even if the repository moves:
 
 ```
-restic-backups-linkding_srv_backups_linkding.service
+sudo ryra-backup-linkding snapshots
+sudo ryra-backup-linkding backup
+sudo ryra-backup-linkding restore <snapshot>
 ```
 
 Switching the backend to Postgres changes this: the data directory stops being
