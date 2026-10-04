@@ -29,7 +29,16 @@
     # Prefixing sidesteps the question rather than answering it, and costs nothing: record names
     # are unique per vault already.
     secrets = {
-      "linkding-admin" = "Env file holding LD_SUPERUSER_NAME and LD_SUPERUSER_PASSWORD";
+      "linkding-admin" = {
+        purpose = "Linkding administrator account";
+        setup = {
+          instructions = "Choose the administrator login for this service. Ryra stores the credentials securely and prepares the required file.";
+          fields = [
+            { name = "LD_SUPERUSER_NAME"; label = "Username"; secret = false; }
+            { name = "LD_SUPERUSER_PASSWORD"; label = "Password"; secret = true; }
+          ];
+        };
+      };
       "restic-linkding" = {
         purpose = "Encryption password for linkding's backup repository";
         owner = "linkding";

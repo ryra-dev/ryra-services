@@ -34,8 +34,14 @@
     # the keys can go into secrets.yaml BEFORE a rebuild fails on a missing
     # one.
     secrets = {
-      "nextcloud-adminpass" = "Nextcloud admin account password";
-      "nextcloud-sso-secret" = "OIDC client secret, shared with Authelia";
+      "nextcloud-adminpass" = {
+        purpose = "Nextcloud admin account password";
+        generate = { format = "hex"; bytes = 32; };
+      };
+      "nextcloud-sso-secret" = {
+        purpose = "OIDC client secret, shared with Authelia";
+        generate = { format = "hex"; bytes = 32; };
+      };
       "restic-nextcloud" = {
         purpose = "Encryption password for Nextcloud's file backup repository";
         owner = "nextcloud";
