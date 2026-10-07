@@ -1,9 +1,9 @@
 {
-  description = "ryra-services — a registry of self-hostable services as NixOS aspects";
+  description = "ryra-services: services to connect to or run yourself";
 
-  # Input-free: the host pins the packages and infrastructure providers.
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/151fa4e8ddfdd8dd25d945ad94ed54a13de9f6e4";
   outputs =
-    { self }:
+    { self, nixpkgs }:
     let
       # Every directory under ./services is a service. Adding one is creating a
       # folder; there is no list to keep in step, and therefore no way to add a
@@ -18,8 +18,7 @@
       # that would not evaluate for anybody, and the comment above already said what the code
       # should have done.
       #
-      # `builtins` rather than `lib.filterAttrs` because this flake takes no inputs on purpose:
-      # a registry describes services, it does not pin the world they run in.
+      # Keep metadata evaluation independent of nixpkgs; packages pin their runtime separately.
       entries = builtins.readDir ./services;
       names = builtins.filter (n: entries.${n} == "directory") (builtins.attrNames entries);
     in
@@ -57,7 +56,7 @@
       # system, which is what makes the registry listable and checkable
       # cheaply.
       #
-      #   nix eval --json .#services.nextcloud.meta
+      #   nix eval --json .#ryraServices.nextcloud.meta
       #   nix eval --json .#index
       ryraServices = builtins.listToAttrs (
         map (n: {
@@ -72,7 +71,33 @@
       # committed dump of this rather than a hand-written index, so the two
       # cannot drift: there is one authored source and everything else is
       # derived from it.
-      index = builtins.mapAttrs (_: svc: svc.meta) self.ryraServices;
+      index = builtins.mapAttrs (name: svc: svc.meta // { deployable = svc ? module; }
+        // (if svc ? package then { package = name; } else { })) self.ryraServices;
+
+      packages = builtins.listToAttrs (map (system: {
+        name = system;
+        value = builtins.mapAttrs (_: svc: svc.package (import nixpkgs { inherit system; }))
+          (nixpkgs.lib.filterAttrs (_: svc: svc ? package) self.ryraServices);
+      }) [ "aarch64-darwin" "aarch64-linux" "x86_64-linux" ]);
+
+      lib.mkAdapter = { pkgs, name, src }:
+        import ./adapters/package.nix { inherit pkgs src; service = name; };
+
+      lib.withServices = { pkgs, package, services ? self.ryraServices, index ? builtins.mapAttrs (name: svc: svc.meta // { deployable = svc ? module; } // (if svc ? package then { package = name; } else { })) services }:
+        let
+          adapters = map (svc: svc.package pkgs)
+            (builtins.filter (svc: svc ? package) (builtins.attrValues services));
+        in
+        pkgs.symlinkJoin {
+          name = "ryra-with-services";
+          paths = [ package ] ++ adapters;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          postBuild = ''
+            wrapProgram "$out/bin/ryra" \
+              --set RYRA_SERVICE_INDEX ${pkgs.writeText "ryra-services.json" (builtins.toJSON index)} \
+              --prefix PATH : ${pkgs.lib.makeBinPath adapters}
+          '';
+        };
 
       # What a registry entry must provide for the mechanism to use it.
       #
@@ -109,12 +134,11 @@
                   [ "${name}: missing `meta.${field}`." ];
             in
             (if hasMeta then [ ] else [ "${name}: has no `meta` attribute." ])
-            ++ (if svc ? module then [ ] else [ "${name}: has no `module` attribute." ])
             ++ missing "summary"
             # optionRoot is where the mechanism reaches for `.backup` and
             # `.mount`. Without it a host fails deep inside a rebuild rather
             # than here.
-            ++ missing "optionRoot"
+            ++ (if svc ? module then missing "optionRoot" else [ ])
           ) self.ryraServices
         )
       );

@@ -10,6 +10,18 @@
 # a stricter mode on a file: it is one credential where there should have been several.
 {
   meta = {
+    title = "Claude";
+    auth.claude = {
+      label = "Claude";
+      why = "Use your own Claude Code sign-in on the machines you reach.";
+      connect = {
+        kind = "local";
+        command = [ "claude" "auth" "login" ];
+        file = ".claude/.credentials.json";
+        keychain = "Claude Code-credentials";
+      };
+      carries = { at = ".claude/.credentials.json"; what = "your own Claude sign-in"; };
+    };
     summary = "Claude Code, signed in as whoever is using it";
     category = "tools";
     url = "https://claude.com/claude-code";

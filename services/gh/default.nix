@@ -15,18 +15,34 @@
 # access groups reach. Right for a database password and wrong for a GitHub sign-in, because when
 # Ada pushes from this machine she is pushing as Ada and Ben is pushing as Ben.
 #
-# So `carries` names a credential each PERSON brings their own of. Ryra reads this, writes it into
-# the machine's `carries` in the declaration, and every person with a login there seals their own
-# to the box out of a keyring nobody else can open. Whoever deploys copies ciphertext they cannot
-# read: an admin can put your GitHub sign-in in your account without ever holding it.
+# `carries` describes the personal credential this tool can import. Delivery is explicitly
+# declared on the machine; installing the tool alone does not request anyone's sign-in.
 #
-# It names the credential and never the path. Where gh keeps its own hosts file is gh's fact, and
-# it lives in Ryra's integrations table, which is also the only place that can carry it: the
-# phones link a compiled interface, so a credential type invented in a flake would have nothing
-# to call. An entry carrying its own path would be a second answer that disagrees the day the
-# tool moves its file.
 {
+  package = pkgs: import ../../adapters/package.nix { inherit pkgs; service = "gh"; };
   meta = {
+    title = "GitHub";
+    auth.github = {
+      label = "GitHub";
+      why = "Read and push repositories as yourself, and create deploy keys for your machines.";
+      connect = {
+        kind = "token";
+        page = "https://github.com/settings/personal-access-tokens/new?name=Ryra&description=Repository%20access%20and%20machine%20deploy%20keys&expires_in=90&contents=write&administration=write";
+        scopes = "Browser sign-in requests repository read/write access. Use a fine-grained personal access token to select specific repositories. Contents write allows pushing; Administration write allows creating deploy keys.";
+        fields = [ "token" ];
+      };
+      driver = {
+        command = [ "ryra-adapter-gh" ];
+        configuration = { client_id = ""; client_secret = ""; };
+        required = [ "client_id" "client_secret" ];
+      };
+      settings = {
+        "/driver/configuration/client_id".env = "RYRA_GITHUB_CLIENT_ID";
+        "/driver/configuration/client_secret".env = "RYRA_GITHUB_CLIENT_SECRET";
+      };
+      environment.GH_TOKEN = "token";
+      carries = { at = ".config/gh/hosts.yml"; what = "your own GitHub sign-in"; };
+    };
     summary = "The GitHub CLI, signed in as whoever is using it";
     category = "tools";
     url = "https://cli.github.com";

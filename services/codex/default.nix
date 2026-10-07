@@ -6,6 +6,17 @@
 # a design say that without a flag.
 {
   meta = {
+    title = "Codex";
+    auth.codex = {
+      label = "Codex";
+      why = "Use your own Codex sign-in on the machines you reach.";
+      connect = {
+        kind = "local";
+        command = [ "codex" "login" ];
+        file = ".codex/auth.json";
+      };
+      carries = { at = ".codex/auth.json"; what = "your own Codex sign-in"; };
+    };
     summary = "OpenAI's agent, signed in as whoever is using it";
     category = "tools";
     url = "https://developers.openai.com/codex/cli";

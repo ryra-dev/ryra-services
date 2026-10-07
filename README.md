@@ -1,8 +1,69 @@
 # ryra-services
 
-NixOS services for Ryra, enabled by names like `ryra/nextcloud`.
+Services for Ryra, including external accounts and applications you can deploy.
+Deployable services use names like `ryra/nextcloud`.
 
 Service definitions and operational notes live in [services/](services/).
+For Gmail access through a saved connection, see the [Google guide](services/google/README.md).
+
+## Authentication
+
+An entry's optional `meta.auth` declares its login choices alongside its other
+metadata. The flake's `index` exposes everything as JSON without building a NixOS
+system. It derives `deployable` from the presence of `module`; external services
+need no module or `optionRoot`. Google and Microsoft demonstrate OAuth definitions.
+An entry with `package` can be installed on a machine without signing in. The
+service module adds that package alongside any deployment module. Personal
+credential delivery and shared service bindings are separate declaration choices.
+
+```nix
+{
+  meta = {
+    title = "My app";
+    summary = "Read my documents";
+    auth.my-app = {
+      label = "My app";
+      why = "Read my documents";
+      connect = {
+        kind = "token";
+        page = "https://app.example/account/keys";
+        scopes = "Documents: read";
+        fields = [ "token" ];
+      };
+      environment.MY_APP_TOKEN = "token";
+    };
+  };
+}
+```
+
+Authentication IDs are unique across the index. Additional repositories have a
+namespace: `acme`'s `my-app` becomes `acme.my-app`. `connect.kind` supports `oauth2`
+(authorization code with PKCE and refresh), `token` (API keys or bearer tokens),
+and `local` (an executable login command and captured credential file).
+OAuth profiles declare endpoints, an authenticated identity read and permission
+choices. Use `settings` for publisher registration values; user credentials never
+belong in metadata or the Nix store. Optional `driver` executables implement other
+authentication protocols through typed login and refresh requests. The
+[Bun/TypeScript SDK](adapters/README.md) provides Zod schemas and examples.
+
+`lib.withServices { inherit pkgs; package = ryra; index = myRegistry.index; }`
+packages one index for both `ryra catalog services` and `ryra integrations`.
+The equivalent without a wrapper is `RYRA_SERVICE_INDEX=/path/to/index.json`.
+The desktop Services page and `ryra catalog services --org ORG` read the same
+organization repository list. Add a repository from Services → Repositories, or
+save a complete list with `ryra catalog services --org ORG --save-sources --source
+acme=github:acme/services`. The default is `github:ryra-dev/ryra-services`.
+Fetched metadata is cached at its resolved revision; `--refresh` updates it.
+There is no separate connection catalog.
+
+Connections with environment bindings support Ryra's reviewed
+`--connection SERVICE=CONNECTION_ID` binding, private systemd credentials and
+persistent refresh state. The service
+runs `ryra integrations run ID --credentials "$RYRA_CONNECTION_CREDENTIALS"
+--state "$RYRA_CONNECTION_STATE" -- COMMAND`. Executable authentication adapters
+use that same storage and restart path, keeping opaque refresh state out of the
+consumer's environment. They own protocol validation, account identity and grant
+checks. Plain API keys have no automatic verification or refresh.
 
 ## Required credentials
 

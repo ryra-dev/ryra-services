@@ -1,0 +1,13 @@
+{
+  "name": "@ryra/adapter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts", "./http": "./src/http.ts", "./auth": "./src/auth.ts" },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "schema": "bun src/schema.ts"
+  },
+  "dependencies": { "zod": "4.1.12" },
+  "devDependencies": { "typescript": "5.9.3", "@types/bun": "1.3.0" }
+}

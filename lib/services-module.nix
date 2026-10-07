@@ -79,7 +79,7 @@
   },
 }:
 
-{ config, lib, options, ... }:
+{ config, lib, options, pkgs, ... }:
 
 let
   inherit (lib) mkMerge mapAttrsToList getAttrFromPath;
@@ -174,12 +174,16 @@ let
       }."
     ) (builtins.filter (s: s.ref.ok && s.svc == null) resolved)
     ++ map (
+      s: "ryra.services: `${s.qualified}` has no package or deployment module."
+    ) (builtins.filter (s: s.svc != null && !(s.svc ? module) && !(s.svc ? package)) resolved)
+    ++ map (
       s: "ryra.services: `${s.qualified}` has no `meta.optionRoot`, so nothing can be wired to it."
-    ) (builtins.filter (s: s.svc != null && s.optionRoot == null) resolved);
+    ) (builtins.filter (s: s.svc != null && s.svc ? module && s.optionRoot == null) resolved);
 
   # Only sound entries reach the wiring. A broken one would otherwise produce a
   # second, uglier failure on top of the assertion that already explains it.
-  enabled = builtins.filter (s: s.svc != null && s.optionRoot != null) resolved;
+  enabled = builtins.filter (s: s.svc != null && s.svc ? module && s.optionRoot != null) resolved;
+  packages = builtins.filter (s: s.svc != null && s.svc ? package) resolved;
 
   # The other half: a service seen THROUGH the evaluated config. Only legal
   # inside `config`, which is exactly where these are used, and unavailable
@@ -335,7 +339,8 @@ in
 
   config = mkMerge [
     {
-      ryra.services.names = map (s: s.name) enabled;
+      environment.systemPackages = map (s: s.svc.package pkgs) packages;
+      ryra.services.names = lib.unique (map (s: s.name) (enabled ++ packages));
       ryra.services.certificateNames = map (s: s.name) (builtins.filter needsSsl enabled);
       ryra.services.resolved = map (s: {
         inherit (s)
