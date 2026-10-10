@@ -38,23 +38,12 @@
 
   module =
     { ... }:
-    { pkgs, lib, ... }:
+    { pkgs, ... }:
     {
       environment.systemPackages = [ pkgs.claude-code ];
 
-      # claude-code is UNFREE, so a host that has not said so refuses to build it. Found by
-      # trying: the module evaluates, the package resolves, `nix eval` on the whole NixOS system
-      # lists it happily, and the rebuild then stops with a licence error naming a package the
-      # person adding this entry never typed.
-      #
-      # Permitted for THIS package by name rather than by setting `allowUnfree`, which would let
-      # every future unfree thing onto the machine on the strength of somebody once wanting an
-      # agent. An entry may speak for its own dependency and for nothing else.
-      #
-      # `lib.mkDefault` so a host that has already made its own decision keeps it: this is the
-      # entry saying "I need this", not overruling an operator who said otherwise.
-      nixpkgs.config.allowUnfreePredicate = lib.mkDefault (
-        pkg: builtins.elem (lib.getName pkg) [ "claude-code" ]
-      );
+      # nixpkgs merges this list with the host's license policy. A predicate
+      # replaces the host's function even when wrapped in mkDefault.
+      nixpkgs.config.allowUnfreePackages = [ "claude-code" ];
     };
 }

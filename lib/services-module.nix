@@ -221,8 +221,20 @@ let
     lib.unique (lib.subtractLists (lib.unique names) names);
 
   needsShb = builtins.filter (s: s.shbModule != null) enabled;
+  needsCertificates = builtins.filter needsSsl enabled;
+  setupProblems = problems
+    ++ lib.optional (needsShb != [ ] && selfhostblocks == null)
+      "ryra.services: ${lib.concatStringsSep ", " (map (s: s.qualified) needsShb)} requires `selfhostblocks`. Pass the host's flake input."
+    ++ lib.optional (needsCertificates != [ ] && domain == null)
+      "ryra.services: ${lib.concatStringsSep ", " (map (s: s.qualified) needsCertificates)} requests SSL but `domain` is null. Pass the DNS suffix its URL uses."
+    ++ lib.optional (needsCertificates != [ ] && sslFor == null)
+      "ryra.services: ${lib.concatStringsSep ", " (map (s: s.qualified) needsCertificates)} requests SSL but `sslFor` is null. Pass a certificate provider.";
 
 in
+# Imports and unknown option definitions fail before NixOS assertions run.
+if setupProblems != [ ] then
+  throw (lib.concatStringsSep "\n" setupProblems)
+else
 {
   imports =
     lib.optionals (needsShb != [ ]) (
@@ -351,15 +363,7 @@ in
           ;
       }) enabled;
 
-      # Every complaint reaches the user in one pass. NixOS gathers failed
-      # assertions and reports them together, which is the same shape as
-      # `.#validate` and for the same reason: fixing three mistakes should take
-      # one rebuild, not three.
-      assertions = map (p: {
-        assertion = false;
-        message = p;
-      }) problems
-      ++ [
+      assertions = [
         {
           assertion =
             stateProvider == null
@@ -375,22 +379,6 @@ in
         {
           assertion = duplicates == [ ];
           message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Two services with one name would share a subdomain, state entry, backup repository and sops keys. Set `name` on one of them.";
-        }
-        {
-          assertion = needsShb == [ ] || selfhostblocks != null;
-          message = "ryra.services: ${(builtins.head needsShb).qualified} is implemented by the selfhostblocks module `${(builtins.head needsShb).shbModule}`, but no `selfhostblocks` was passed to the mechanism. Pass the host's flake input.";
-        }
-        {
-          assertion = domain != null || builtins.filter needsSsl enabled == [ ];
-          message = "ryra.services: ${
-            lib.concatStringsSep ", " (map (s: s.qualified) (builtins.filter needsSsl enabled))
-          } requests SSL but `domain` is null. Pass the DNS suffix its URL uses.";
-        }
-        {
-          assertion = sslFor != null || builtins.filter needsSsl enabled == [ ];
-          message = "ryra.services: ${
-            lib.concatStringsSep ", " (map (s: s.qualified) (builtins.filter needsSsl enabled))
-          } requests SSL but `sslFor` is null. Pass a provider, for example `sslFor = name: config.ryra.tailscale.certs.\${name};`.";
         }
         {
           assertion = backupProvider != null || builtins.filter backsUp enabled == [ ];
