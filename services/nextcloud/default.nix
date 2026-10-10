@@ -43,7 +43,7 @@
         generate = { format = "hex"; bytes = 32; };
       };
       "restic-nextcloud" = {
-        purpose = "Encryption password for Nextcloud's file backup repository";
+        purpose = "Encryption password for Nextcloud's backup repository";
         owner = "nextcloud";
         restart = [ "restic-backups-nextcloud.service" ];
         generate = {
@@ -79,13 +79,37 @@
       contracts,
       settings,
     }:
-    { config, ... }:
+    { config, lib, pkgs, ... }:
+    let
+      occ = "${config.services.nextcloud.occ}/bin/nextcloud-occ";
+      database = lib.escapeShellArg config.services.nextcloud.config.dbname;
+      backupDir = "/var/lib/${name}/.ryra-backup";
+      dump = lib.escapeShellArg "${backupDir}/database.dump";
+      postgres = config.services.postgresql.package;
+    in
     {
       shb.nextcloud = {
         enable = true;
         inherit domain subdomain ssl;
         dataDir = "/var/lib/${name}";
         defaultPhoneRegion = settings.phoneRegion or "NO";
+
+        backup.request = {
+          beforeBackup = [ ''
+            ${occ} maintenance:mode --on
+            umask 077
+            ${pkgs.coreutils}/bin/mkdir -p ${lib.escapeShellArg backupDir}
+            ${postgres}/bin/pg_dump --format=custom --file=${dump} ${database}
+          '' ];
+          beforeRestore = [ "${occ} maintenance:mode --on" ];
+          afterRestore = [ ''
+            ${pkgs.util-linux}/bin/runuser -u nextcloud -- \
+              ${postgres}/bin/pg_restore --clean --if-exists --no-owner \
+              --single-transaction --dbname=${database} ${dump}
+            ${occ} maintenance:data-fingerprint
+            ${occ} maintenance:mode --off
+          '' ];
+        };
 
         # Contract: nextcloud declares it needs a secret, sops provides it. The
         # mechanism does not write these, because WHICH secrets a service needs
@@ -116,6 +140,17 @@
           secret.result = config.shb.sops.secret."${name}-sso-secret".result;
           secretForAuthelia.result = config.shb.sops.secret."authelia-${name}_sso_secret".result;
         };
+      };
+
+      systemd.services.nginx = lib.mkIf (ssl != null) {
+        after = [ ssl.systemdService ];
+        requires = [ ssl.systemdService ];
+      };
+
+      systemd.services.${lib.removeSuffix ".service" config.shb.nextcloud.backup.result.backupService}.serviceConfig = {
+        LoadCredential = config.systemd.services.phpfpm-nextcloud.serviceConfig.LoadCredential or [ ];
+        # Systemd removes runtime credentials before ExecStopPost. Let occ load its own.
+        ExecStopPost = [ "+${pkgs.coreutils}/bin/env -u CREDENTIALS_DIRECTORY ${occ} maintenance:mode --off" ];
       };
 
       # Declare state explicitly because the application exposes no mount contract.

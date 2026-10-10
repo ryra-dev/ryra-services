@@ -1,24 +1,20 @@
 ---
 name: nextcloud
-description: Operating, restoring and upgrading a ryra-managed Nextcloud.
+description: Operating, restoring and upgrading a Ryra-managed Nextcloud.
 ---
 
 # Nextcloud
 
-## A restore needs two repositories, not one
+## Back up files and the database together
 
-`ryra-backup-nextcloud` covers `/var/lib/nextcloud` — **files only**.
-The database lives in the cluster-wide `pg_dumpall` taken by the postgresql
-service, in a different restic repository with a different passphrase. Restoring
-files alone gives you a Nextcloud that starts, serves a login page, and knows
-about no users or shares.
+`ryra-backup-nextcloud backup` enables maintenance mode, dumps Nextcloud's
+PostgreSQL database into its private state directory, and snapshots that directory.
+It disables maintenance mode when the backup finishes.
 
-Restore order that works: stop nginx and phpfpm, restore the database dump,
-restore the data directory, then `nextcloud-occ maintenance:mode --off`.
-Restoring files onto a newer database schema than they were taken with is the
-one ordering that silently half-works.
-
-The file repository has the same provider-neutral helper as every service:
+Restore with the same Nextcloud version that created the snapshot. The helper
+restores the files and database, updates the data fingerprint, then leaves
+maintenance mode. A failed restore leaves maintenance mode enabled so an
+incomplete recovery cannot accept writes. Fix the reported failure and retry.
 
 ```
 sudo ryra-backup-nextcloud snapshots
@@ -29,7 +25,7 @@ sudo ryra-backup-nextcloud restore <snapshot>
 ## Upgrade one major at a time
 
 Nextcloud refuses to skip a major version, and NixOS will happily offer you a
-package two majors ahead. The failure is not at build time — it is `occ upgrade`
+package two majors ahead. The failure is not at build time: it is `occ upgrade`
 refusing at activation, after the switch has already moved everything else.
 
 Pin `services.nextcloud.package` explicitly, go one major, let it settle, then

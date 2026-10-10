@@ -128,6 +128,11 @@
       };
 
       config = {
+        systemd.services.nginx = lib.mkIf (ssl != null) {
+          after = [ ssl.systemdService ];
+          requires = [ ssl.systemdService ];
+        };
+
         services.linkding = {
           enable = true;
           user = name;

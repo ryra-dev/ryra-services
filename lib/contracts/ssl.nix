@@ -28,13 +28,7 @@ in
       };
 
       systemdService = mkOption {
-        description = ''
-          Unit that produces the certificate.
-
-          Consumers order themselves after it. `after` rather than `requires`,
-          so one failing certificate degrades a single vhost instead of taking
-          the whole web server down with it.
-        '';
+        description = "Unit that produces the certificate. Consumers must require it and start after it.";
         type = types.str;
       };
     };

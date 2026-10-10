@@ -16,15 +16,6 @@ action = "wait"
 unit = "nginx.service"
 timeout = 60
 
-# The cert unit is asserted on its own because its failure is the loudest and
-# least obvious one on the box: nginx will not start with a vhost pointing at a
-# certificate that is not there, so every service goes down and none of them
-# say why. Adding linkding did exactly this.
-[[tests.checks]]
-action = "wait"
-unit = "tailscale-cert-linkding.service"
-timeout = 60
-
 # 302 to the Authelia login. This is the check that proves SSO is actually in
 # front of the app: a 200 here would mean the bookmark manager is answering
 # anonymously, which is the failure worth catching.
@@ -61,5 +52,5 @@ run = "sudo grep -q '^LD_SUPERUSER_NAME=' /run/secrets/linkding-admin"
 [[tests.checks]]
 action = "shell"
 name = "restic repository holds a snapshot"
-run = "sudo ryra-backup-linkding exec snapshots | grep -q /var/lib/linkding"
+run = "sudo ryra-backup-linkding exec snapshots | grep -F /var/lib/linkding >/dev/null"
 timeout = 60

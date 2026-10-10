@@ -24,14 +24,6 @@ action = "wait"
 unit = "nginx.service"
 timeout = 60
 
-# The certificate is its own unit and its own failure. Worth asserting
-# separately, because when it fails nginx does not start at all and every other
-# check on the box goes red at once with no indication of why.
-[[tests.checks]]
-action = "wait"
-unit = "tailscale-cert-nextcloud.service"
-timeout = 60
-
 # 302 rather than 200: an unauthenticated GET redirects to the login flow.
 # Asserting 200 here would mean asserting that Nextcloud does NOT require a
 # login, which is the opposite of what we want to be true.
@@ -72,6 +64,6 @@ run = "sudo test -d /var/lib/nextcloud && test \"$(sudo stat -c %U:%G /var/lib/n
 # lists what restic already has rather than taking a new one.
 [[tests.checks]]
 action = "shell"
-name = "restic repository holds a snapshot"
-run = "sudo ryra-backup-nextcloud exec snapshots | grep -q /var/lib/nextcloud"
+name = "restic snapshot includes files and the database"
+run = "sudo ryra-backup-nextcloud exec snapshots | grep -F /var/lib/nextcloud >/dev/null && sudo ryra-backup-nextcloud exec ls latest /var/lib/nextcloud/.ryra-backup/database.dump | grep -F '/var/lib/nextcloud/.ryra-backup/database.dump' >/dev/null"
 timeout = 60

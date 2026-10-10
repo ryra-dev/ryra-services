@@ -12,6 +12,8 @@ in
       excludePatterns ? [ ],
       beforeBackup ? [ ],
       afterBackup ? [ ],
+      beforeRestore ? [ ],
+      afterRestore ? [ ],
     }:
     {
       user = mkOption {
@@ -32,23 +34,28 @@ in
         default = excludePatterns;
       };
 
-      hooks = {
-        beforeBackup = mkOption {
-          description = ''
-            Commands to run before the backup.
+      beforeBackup = mkOption {
+        description = "Commands to run before the backup.";
+        type = types.listOf types.str;
+        default = beforeBackup;
+      };
 
-            Where a service needs quiescing: dumping a database, or stopping a
-            writer so the snapshot is not torn.
-          '';
-          type = types.listOf types.str;
-          default = beforeBackup;
-        };
+      afterBackup = mkOption {
+        description = "Commands to run after the backup.";
+        type = types.listOf types.str;
+        default = afterBackup;
+      };
 
-        afterBackup = mkOption {
-          description = "Commands to run after the backup.";
-          type = types.listOf types.str;
-          default = afterBackup;
-        };
+      beforeRestore = mkOption {
+        description = "Commands to run before restoring a backup.";
+        type = types.listOf types.str;
+        default = beforeRestore;
+      };
+
+      afterRestore = mkOption {
+        description = "Commands to run after a successful restore.";
+        type = types.listOf types.str;
+        default = afterRestore;
       };
     };
 

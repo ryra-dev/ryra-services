@@ -83,7 +83,9 @@ let
             ;;
           restore)
             test "$#" -eq 2 || usage
+            ${lib.concatStringsSep "\n" requests.${name}.beforeRestore}
             restic-${name} restore "$2" --target /
+            ${lib.concatStringsSep "\n" requests.${name}.afterRestore}
             ;;
           exec)
             shift
@@ -139,8 +141,8 @@ in
             Persistent = true;
           };
           inherit pruneOpts;
-          backupPrepareCommand = lib.concatStringsSep "\n" request.hooks.beforeBackup;
-          backupCleanupCommand = lib.concatStringsSep "\n" request.hooks.afterBackup;
+          backupPrepareCommand = lib.concatStringsSep "\n" ([ "set -e" ] ++ request.beforeBackup);
+          backupCleanupCommand = lib.concatStringsSep "\n" ([ "set -e" ] ++ request.afterBackup);
         }
       ) requests;
 
