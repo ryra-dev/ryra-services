@@ -1,106 +1,42 @@
-# A design: one repo describing one or more machines.
-#
-# Made with `nix flake init -t <this registry>` and yours from then on. The only
-# file `ryra design` keeps writing is ./modules/ryra/services.json, which is the
-# list of enabled services and nothing else. JSON rather than Nix so that nix
-# reads it with `builtins.fromJSON` and anything else reads it with `jq`: there
-# is no bespoke format and nothing hand-parses Nix.
-#
-# Four things in here each cost an evaluation round when this was first built by
-# hand against a real box. They are numbered, because none of them is guessable
-# and every one of them fails deep in a trace rather than where you can see it.
 {
-  description = "a design";
+  description = "A Ryra machine design";
 
   inputs = {
-    selfhostblocks.url = "github:ibizaman/selfhostblocks";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     sops-nix.url = "github:Mic92/sops-nix";
-    # While this registry has no remote, point at your checkout:
-    #   ryra-services.url = "path:/home/you/code/ryra-services";
-    ryra-services.url = "github:ryra/ryra-services";
+    sops-nix.inputs.nixpkgs.follows = "nixpkgs";
+    ryra-services.url = "github:ryra-dev/ryra-services";
+    ryra-services.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs =
-    { self, selfhostblocks, sops-nix, ryra-services }:
+  outputs = { self, nixpkgs, sops-nix, ryra-services }:
     let
-      system = "x86_64-linux";
-      # The application modules require this patched nixpkgs tree.
-      # This is a DERIVATION, not a path, so evaluating this design needs a
-      # Linux builder: on a Mac that means `nix.linux-builder.enable = true`,
-      # or running `ryra design --ssh <box>`.
-      nixpkgs' = selfhostblocks.lib.${system}.patchedNixpkgs;
-
       enabled = builtins.fromJSON (builtins.readFile ./modules/ryra/services.json);
       settings = import ./modules/ryra/settings.nix;
-    in
-    {
-      # Which machine each host deploys to. A pure output, so reading it costs
-      # no module evaluation, and a fact in the repo rather than a flag somebody
-      # has to remember.
-      ryraDeploy = {
-        # fsn1 = "your-ssh-destination";
-      };
-
-      nixosConfigurations.fsn1 = nixpkgs'.nixosSystem {
-        inherit system;
+      web = builtins.fromJSON (builtins.readFile ./modules/ryra/web.json);
+    in {
+      ryraDeploy = {};
+      ryraCatalog.fsn1.ryra = { flake = "github:ryra-dev/ryra-services"; inherit (ryra-services) index; };
+      nixosConfigurations.fsn1 = nixpkgs.lib.nixosSystem {
+        system = "x86_64-linux";
         modules = [
           sops-nix.nixosModules.default
-          selfhostblocks.nixosModules.nginx
-          selfhostblocks.nixosModules.ssl
-          selfhostblocks.nixosModules.sops
-          ({ config, ... }: {
+          (ryra-services.nixosModules.services {
+            registries.ryra = ryra-services;
+            services = builtins.listToAttrs (map (name: {
+              inherit name;
+              value = (settings.${name} or {}) // { web = web.${name} or {}; };
+            }) enabled);
+          })
+          {
             networking.hostName = "fsn1";
             system.stateVersion = "25.05";
-
-            # Replace with this machine's real disk layout.
+            # Replace with this machine's real disk layout before deploying.
             fileSystems."/" = { device = "/dev/sda1"; fsType = "ext4"; };
             boot.loader.grub.device = "/dev/sda";
-
-            # (1) sops needs a key source, and in practice that means sshd.
             services.openssh.enable = true;
-            # (2) The path must exist at eval. Decryption happens on the box.
             sops.defaultSopsFile = ./secrets.yaml;
-
-            # (3) Selfsigned certificates need a CA declared separately. This is
-            # the SSL provider with no tailnet; swap `sslFor` below for Tailscale
-            # or ACME and nothing else changes. That is the contract working.
-            shb.certs.cas.selfsigned.myca = { };
-          })
-
-          # (4) The mechanism is a function RETURNING a module, so it goes
-          # through `imports` inside one: `imports` may not depend on `config`,
-          # and `sslFor` does.
-          ({ config, ... }: {
-            imports = [
-              (ryra-services.nixosModules.services {
-                registries.ryra = ryra-services;
-                selfhostblocks = selfhostblocks;
-                domain = "example.ts.net";
-                zfsPool = null;
-                sslFor = name: config.shb.certs.certs.selfsigned.${name};
-                services = builtins.listToAttrs (
-                  map (n: {
-                    name = n;
-                    value = settings.${n} or { };
-                  }) enabled
-                );
-              })
-            ];
-
-            # One certificate per service that asks for SSL, derived rather
-            # than listed, so a loopback-only service costs no certificate and
-            # the list cannot fall out of step with the services.
-            shb.certs.certs.selfsigned = builtins.listToAttrs (
-              map (n: {
-                name = n;
-                value = {
-                  ca = config.shb.certs.cas.selfsigned.myca;
-                  domain = "example.ts.net";
-                  group = "nginx";
-                };
-              }) config.ryra.services.certificateNames
-            );
-          })
+          }
         ];
       };
     };

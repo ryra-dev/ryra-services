@@ -28,22 +28,14 @@ Nextcloud refuses to skip a major version, and NixOS will happily offer you a
 package two majors ahead. The failure is not at build time: it is `occ upgrade`
 refusing at activation, after the switch has already moved everything else.
 
-Pin `services.nextcloud.package` explicitly, go one major, let it settle, then
+Set the recipe's `settings.package` explicitly, go one major, let it settle, then
 go again.
 
-## The two aliased secrets
+## Access and accounts
 
-`nextcloud-ldap_admin_password` and `authelia-nextcloud_sso_secret` are declared
-with `settings.key` pointing at `lldap-user_password` and `nextcloud-sso-secret`
-respectively. They are not independent values: Nextcloud binds to LLDAP as its
-admin user, and Nextcloud and Authelia must agree on one OIDC client secret.
-
-Generating fresh values for them instead of aliasing produces a service that
-starts cleanly, passes every health check, and cannot log anybody in. If SSO
-breaks after a secrets rotation, check the alias before checking anything else.
-
-## fallbackDefaultAuth is a deliberate escape hatch
-
-`apps.sso.fallbackDefaultAuth = true` keeps Nextcloud's own admin login
-reachable. Without it, an Authelia that fails to start locks every account out
-of Nextcloud, including the one that could fix it. Leave it on.
+The default address is `http://127.0.0.1:8082` on the service machine, reached
+through Ryra's encrypted connection. Public access uses a declared domain with
+automatic HTTPS. PostgreSQL, Redis and PHP are configured by the native NixOS
+module. Nextcloud keeps its own users and login; no separate identity service
+is required. The initial `admin` password is the `nextcloud-adminpass` vault
+secret. Manage additional accounts and subsequent passwords inside Nextcloud.

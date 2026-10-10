@@ -1,4 +1,4 @@
-# Turn qualified service names into modules, certificates, backups and state.
+# Turn qualified service names into modules, web routes, backups and state.
 # This function returns a module because imports cannot depend on config.
 {
   # Registry name -> path to a registry root. The key is the namespace:
@@ -6,25 +6,12 @@
   # both addressable, and distinct.
   registries,
 
-  # Optional upstream application modules, pinned by the host.
-  selfhostblocks ? null,
-
   # Services to run, keyed by QUALIFIED name: "ryra/nextcloud".
   #
   # No unqualified form here on purpose. A config is read far more often than
   # written, usually by someone (or something) that did not write it, and
   # `nextcloud = { }` answers "from where?" only by knowing an unwritten rule.
   services,
-
-  # The DNS suffix web services hang off: a tailnet's MagicDNS suffix. A
-  # machine containing only local tools and loopback services needs none.
-  domain ? null,
-
-  # name -> the ssl contract for that name. The host owns this because the
-  # provider is a host decision: Tailscale here, ACME elsewhere. It is only
-  # called for entries whose metadata names `ssl`; a loopback-only service can
-  # therefore run on a machine with no certificate provider at all.
-  sslFor ? null,
 
   # ZFS pool to carve per-service datasets out of, or null to manage none.
   zfsPool ? null,
@@ -151,15 +138,14 @@ let
       registry = ref.registry or null;
       service = ref.service or null;
 
-      subdomain = opts.subdomain or name;
       settings = opts.settings or { };
+      web = opts.web or {};
 
       # Optional ownership overrides for generated datasets.
       dataset = opts.dataset or { };
 
       # Option namespace used to connect the service to its providers.
       optionRoot = svc.meta.optionRoot or null;
-      shbModule = svc.meta.shbModule or null;
     };
 
   resolved = mapAttrsToList resolve services;
@@ -199,61 +185,33 @@ let
   # fixpoint cycle.
   backsUp = s: (declaredOptionsOf s) ? backup;
 
-  # Unlike backup, this has to be known before evaluating the service module:
-  # `sslFor` may reach into another provider's config, while a service with no
-  # public listener should never cause that provider to be evaluated. `needs`
-  # already exists for exactly these host prerequisites, so it is the one
-  # authored fact rather than a second `public = true` flag beside it.
-  needsSsl = s: builtins.elem "ssl" (s.svc.meta.needs or [ ]);
-
   # Stateful services declare paths explicitly; not every module exposes mount.
   declaresState = s: config.ryra.services.state ? ${s.name};
   stateless = s: s.svc.meta.stateless or false;
 
-  # Two definitions of the same underlying service both want subdomain
-  # `nextcloud`, state name `nextcloud` and the sops key
-  # `nextcloud/adminpass`. Catch it here: the alternative is two units quietly
-  # fighting over /var/lib/nextcloud on a machine that is already serving.
+  # Native NixOS modules describe one instance of each app per machine.
   duplicates =
     let
       names = map (s: s.name) enabled;
     in
     lib.unique (lib.subtractLists (lib.unique names) names);
 
-  needsShb = builtins.filter (s: s.shbModule != null) enabled;
-  needsCertificates = builtins.filter needsSsl enabled;
-  setupProblems = problems
-    ++ lib.optional (needsShb != [ ] && selfhostblocks == null)
-      "ryra.services: ${lib.concatStringsSep ", " (map (s: s.qualified) needsShb)} requires `selfhostblocks`. Pass the host's flake input."
-    ++ lib.optional (needsCertificates != [ ] && domain == null)
-      "ryra.services: ${lib.concatStringsSep ", " (map (s: s.qualified) needsCertificates)} requests SSL but `domain` is null. Pass the DNS suffix its URL uses."
-    ++ lib.optional (needsCertificates != [ ] && sslFor == null)
-      "ryra.services: ${lib.concatStringsSep ", " (map (s: s.qualified) needsCertificates)} requests SSL but `sslFor` is null. Pass a certificate provider.";
+  webServices = builtins.filter (s: s.svc.meta ? web) enabled;
 
 in
 # Imports and unknown option definitions fail before NixOS assertions run.
-if setupProblems != [ ] then
-  throw (lib.concatStringsSep "\n" setupProblems)
+if problems != [ ] then
+  throw (lib.concatStringsSep "\n" problems)
 else
 {
-  imports =
-    lib.optionals (needsShb != [ ]) (
-      # Load upstream contract helpers before the application modules.
-      [ selfhostblocks.nixosModules.lib ]
-      ++ map (s: selfhostblocks.nixosModules.${s.shbModule}) needsShb
-    )
+  imports = [ ./web.nix ]
     ++ lib.optionals (backupProvider != null) [ backupProvider ]
     ++ lib.optionals (stateProvider != null) [ stateProvider ]
     ++ map (
       s:
       s.svc.module {
-        inherit (s) name subdomain settings;
+        inherit (s) name settings;
         inherit contracts;
-        # Keep the value structurally acceptable to application modules so the
-        # assertion below can give the useful error when a web service omitted
-        # its domain. Local-only modules never inspect it.
-        domain = if domain == null then "" else domain;
-        ssl = if sslFor != null && needsSsl s then sslFor s.name else null;
       }
     ) enabled;
 
@@ -264,15 +222,6 @@ else
       description = ''
         The unqualified name of every enabled service, including local-only
         services and command-line tools.
-      '';
-    };
-
-    certificateNames = lib.mkOption {
-      type = lib.types.listOf lib.types.str;
-      readOnly = true;
-      description = ''
-        Enabled services that request SSL. A host derives certificates from
-        this list, so a loopback-only service neither gets nor requires one.
       '';
     };
 
@@ -353,7 +302,9 @@ else
     {
       environment.systemPackages = map (s: s.svc.package pkgs) packages;
       ryra.services.names = lib.unique (map (s: s.name) (enabled ++ packages));
-      ryra.services.certificateNames = map (s: s.name) (builtins.filter needsSsl enabled);
+      ryra.services.web = lib.listToAttrs (map (s: lib.nameValuePair s.name (
+        { port = lib.mkDefault s.svc.meta.web.port; } // s.web
+      )) webServices);
       ryra.services.resolved = map (s: {
         inherit (s)
           qualified
@@ -378,7 +329,7 @@ else
         }
         {
           assertion = duplicates == [ ];
-          message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Two services with one name would share a subdomain, state entry, backup repository and sops keys. Set `name` on one of them.";
+          message = "ryra.services: more than one definition claims the name(s) ${lib.concatStringsSep ", " duplicates}. Choose one definition per app on this machine.";
         }
         {
           assertion = backupProvider != null || builtins.filter backsUp enabled == [ ];

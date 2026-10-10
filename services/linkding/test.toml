@@ -16,18 +16,14 @@ action = "wait"
 unit = "nginx.service"
 timeout = 60
 
-# 302 to the Authelia login. This is the check that proves SSO is actually in
-# front of the app: a 200 here would mean the bookmark manager is answering
-# anonymously, which is the failure worth catching.
 [[tests.checks]]
 action = "http"
-name = "redirects an anonymous visitor to sso"
+name = "redirects an anonymous visitor to login"
 url = "$SERVICE_URL/"
 status = 302
 poll = { interval = 3, attempts = 10 }
 
-# Bound to loopback and nowhere else. If this ever answers on the tailnet
-# address directly, the reverse proxy has been bypassed and so has Authelia.
+# The backend must remain reachable only through nginx.
 [[tests.checks]]
 action = "shell"
 name = "listens on loopback only"

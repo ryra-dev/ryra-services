@@ -5,8 +5,7 @@
 # be written down. On NixOS installing is a deploy (`nixos-rebuild`), not a
 # test step.
 #
-# `$SERVICE_URL` is supplied by the runner as https://<service>.<domain>, so
-# these assertions stay true on a machine with a different name.
+# `$SERVICE_URL` is the app address from /etc/ryra/apps.json.
 
 [[tests]]
 name = "nextcloud"
@@ -43,13 +42,10 @@ url = "$SERVICE_URL/status.php"
 status = 200
 poll = { interval = 3, attempts = 10 }
 
-# SSO is wired, not merely installed. The previous host config learned this the
-# hard way: an app can be present and not configured, and the difference is
-# invisible until somebody tries to log in.
 [[tests.checks]]
 action = "shell"
-name = "oidc and ldap apps are enabled"
-run = "sudo nextcloud-occ app:list | grep -q oidc_login && sudo nextcloud-occ app:list | grep -q user_ldap"
+name = "database setup finished"
+run = "sudo nextcloud-occ status --output=json | grep -q '\"installed\":true'"
 timeout = 60
 
 # The service owns the path. Btrfs protects its parent state subvolume on the

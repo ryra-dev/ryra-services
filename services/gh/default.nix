@@ -61,9 +61,7 @@
     carries = [ "github" ];
   };
 
-  # The mechanism calls this with a service's own arguments -- name, subdomain, domain, ssl,
-  # contracts, settings -- and a tool wants none of them, so they are taken and ignored. What
-  # comes back is an ordinary NixOS module, which is where `pkgs` arrives.
+  # Service arguments arrive before the NixOS module arguments, including pkgs.
   module =
     { ... }:
     { pkgs, ... }:

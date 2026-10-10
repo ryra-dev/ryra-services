@@ -23,8 +23,7 @@
       names = builtins.filter (n: entries.${n} == "directory") (builtins.attrNames entries);
     in
     {
-      # The mechanism: turns an enable list into imported aspects,
-      # certificates, backups and datasets.
+      # The mechanism: turns an enable list into modules, web access and backups.
       nixosModules.services = import ./lib/services-module.nix;
 
       # Native NixOS Restic, translated to our provider-neutral contract. The
@@ -39,10 +38,7 @@
       # A design, ready to evaluate: `nix flake init -t <this flake>`.
       #
       # Here rather than in a tool, because nix already has templates and a
-      # scaffolding command of our own would be a worse copy of one that
-      # exists. Beside the registry rather than in a client, because the five
-      # numbered comments in it are facts about THIS mechanism and go stale
-      # with it.
+      # scaffolding command of our own would be a worse copy of one that exists.
       templates.default = {
         path = ./templates/design;
         description = "A design: one repo describing one or more machines";

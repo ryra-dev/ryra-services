@@ -4,6 +4,6 @@
 # rewrites whole. Anything added there by hand is lost on the next change;
 # anything here survives.
 #
-#   { "ryra/linkding" = { settings.sso = false; }; }
+#   { "ryra/linkding" = { settings.port = 9092; }; }
 {
 }

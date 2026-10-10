@@ -72,7 +72,5 @@ in
   secret = mkContract (import ./secret.nix { inherit lib; });
   backup = mkContract (import ./backup.nix { inherit lib; });
 
-  # SSL and mount providers return a fixed shape without a request/result pair.
-  inherit (import ./ssl.nix { inherit lib; }) certs;
   inherit (import ./mount.nix { inherit lib; }) mount;
 }

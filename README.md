@@ -97,5 +97,29 @@ remote API permissions or expiry. Use `owner` and `restart` where the consuming
 service needs them; existing secret aliases still share the same stored value.
 
 Linkding demonstrates the form; Nextcloud declares generation for its initial
-administrator password and OIDC client secret. This metadata needs a Ryra client
+administrator password. This metadata needs a Ryra client
 that supports credential forms; it does not change the services' runtime paths.
+
+## Web apps
+
+Linkding and Nextcloud use native NixOS modules and nginx. Installing either app
+also configures its required database, private credentials and backups. Each app
+keeps its own login. Installing it does not sign every machine user into that account.
+
+Apps are private by default. Their loopback addresses in `/etc/ryra/apps.json`
+are reachable through an encrypted Ryra machine connection. Public access is an
+explicit configuration choice: give the app a DNS name and nginx requests and
+renews its ACME certificate. DNS must point to the machine and the provider's
+firewall must allow ports 80 and 443. The NixOS firewall opens those ports only
+when a public app is configured. Public HTTPS does not remove the app's login.
+
+Ryra stages these choices in `modules/ryra/web.json`, alongside `services.json`:
+
+```json
+{ "ryra/linkding": { "access": "public", "domain": "bookmarks.example.com" } }
+```
+
+Private access can specify a different port with
+`{ "access": "private", "port": 8083 }`. Duplicate app addresses are refused.
+The file is part of the organization configuration and its Git export. Credentials
+remain in the vault and encrypted machine secrets, never in this file.

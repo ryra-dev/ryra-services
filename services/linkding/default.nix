@@ -1,36 +1,18 @@
-# Linkding bookmark manager, using the native NixOS service and Ryra contracts.
 {
   meta = {
+    title = "Linkding";
     summary = "Bookmark manager";
     category = "productivity";
     url = "https://linkding.link";
-
-    optionRoot = [
-      "ryra"
-      "linkding"
-    ];
-
-    needs = [
-      "ssl"
-      "secrets"
-      "backup"
-      "nginx"
-    ];
-    provides = [ ];
-
-    # FLAT, and prefixed with the service rather than separated by a slash.
-    #
-    # A `/` is how sops-nix spells a path INTO a yaml document, so a key written `linkding/admin`
-    # is looked for as a nested `linkding:` then `admin:`. The files Ryra renders are flat: a
-    # record's name becomes one yaml key, slash and all. So the slashed spelling produced a deploy
-    # that reported success and a machine that failed activation hunting a key that was there,
-    # spelled differently.
-    #
-    # Prefixing sidesteps the question rather than answering it, and costs nothing: record names
-    # are unique per vault already.
+    optionRoot = [ "ryra" "linkding" ];
+    needs = [ "secrets" "backup" ];
+    provides = [];
+    web.port = 8081;
     secrets = {
       "linkding-admin" = {
         purpose = "Linkding administrator account";
+        owner = "linkding";
+        restart = [ "linkding.service" ];
         setup = {
           instructions = "Choose the administrator login for this service. Ryra stores the credentials securely and prepares the required file.";
           fields = [
@@ -40,140 +22,69 @@
         };
       };
       "restic-linkding" = {
-        purpose = "Encryption password for linkding's backup repository";
+        purpose = "Encryption password for Linkding's backup repository";
         owner = "linkding";
         restart = [ "restic-backups-linkding.service" ];
-        generate = {
-          format = "base64";
-          bytes = 32;
-        };
+        generate = { format = "base64"; bytes = 32; };
       };
     };
-    secretAliases = { };
+    secretAliases = {};
   };
 
-  module =
-    {
-      name,
-      subdomain,
-      domain,
-      ssl,
-      contracts,
-      settings,
-    }:
+  module = { name, contracts, settings }:
     { config, lib, ... }:
-
     let
-      cfg = config.ryra.${name};
       dataDir = "/var/lib/${name}";
-
-      # SSO is enforced at the reverse proxy by Authelia rather than inside the
-      # app. linkding does speak OIDC, but forward auth is provider-agnostic
-      # and puts the login in front of every route including the ones that
-      # would otherwise leak a bookmark title in a 404. The tradeoff is in
-      # SKILL.md: it also sits in front of the REST API, so browser extensions
-      # and mobile clients need a bypass rule.
-      ssoEnabled = settings.sso or true;
-      autheliaEndpoint = "https://${config.shb.authelia.subdomain}.${config.shb.authelia.domain}";
-    in
-    {
-      options.ryra.${name} = {
-        # State that cannot be rebuilt from the flake. With the default sqlite
-        # backend this is ALL of it: the database, the secret key, favicons,
-        # previews and assets are one directory, which is why backing this up
-        # is backing up linkding.
-        mount = lib.mkOption {
-          description = "Where linkding keeps state that cannot be rebuilt.";
-          type = contracts.mount;
-          readOnly = true;
-          default = {
-            path = dataDir;
-            owner = name;
-            group = name;
+      web = config.ryra.services.web.${name};
+    in {
+      options.ryra.${name}.backup = lib.mkOption {
+        default = {};
+        type = lib.types.submodule {
+          options = contracts.backup.mkRequester {
+            user = name;
+            sourceDirectories = [ dataDir ];
           };
         };
-
-        # The requester half of the backup contract: what to back up and as
-        # whom. It says nothing about restic, repositories, schedules or
-        # retention, because it must not: the mechanism picks a provider and
-        # this file works unchanged if that provider is ever something else.
-        backup = lib.mkOption {
-          description = "Backup configuration.";
-          default = { };
-          type = lib.types.submodule {
-            options = contracts.backup.mkRequester {
-              user = name;
-              sourceDirectories = [ dataDir ];
-            };
-          };
-        };
-
-        # Never a bare path. The requester carries the ownership the file must
-        # end up with and the units to restart when it changes, so a rotation
-        # takes effect rather than waiting for an unrelated reboot.
-        adminCredentials = lib.mkOption {
-          description = ''
-            File holding LD_SUPERUSER_NAME and LD_SUPERUSER_PASSWORD, in
-            EnvironmentFile format.
-          '';
-          type = lib.types.submodule {
-            options = contracts.secret.mkRequester {
-              mode = "0400";
-              owner = name;
-              group = name;
-              restartUnits = [ "${name}.service" ];
-            };
-          };
-        };
+        description = "Linkding backup request and provider result.";
       };
 
       config = {
-        systemd.services.nginx = lib.mkIf (ssl != null) {
-          after = [ ssl.systemdService ];
-          requires = [ ssl.systemdService ];
-        };
-
+        services.nginx.appendHttpConfig = lib.mkIf (web.access == "private") ''
+          map $http_host $ryra_linkding_port {
+            default "";
+            "~:([0-9]{1,5})$" ":$1";
+          }
+        '';
         services.linkding = {
           enable = true;
           user = name;
           group = name;
           inherit dataDir;
-
-          # Loopback only. The certificate belongs to nginx; an app that
-          # terminates its own TLS is an app that has to be told about
-          # certificate renewal.
           address = "127.0.0.1";
           port = settings.port or 9090;
-
-          environmentFile = cfg.adminCredentials.result.path;
-
-          settings = {
-            LD_LOG_X_FORWARDED_FOR = "true";
-          }
-          // (settings.extraSettings or { });
+          environmentFile = config.sops.secrets."${name}-admin".path;
+          settings = { LD_LOG_X_FORWARDED_FOR = "true"; } // (settings.extraSettings or {});
         };
-
-        # Reverse proxy through the nginx block, which also mounts the Authelia
-        # forward-auth endpoint when one is given.
-        shb.nginx.vhosts = [
-          {
-            inherit subdomain domain ssl;
-            upstream = "http://127.0.0.1:${toString config.services.linkding.port}";
-            authEndpoint = if ssoEnabled then autheliaEndpoint else null;
-          }
-        ];
-
-        # This service does implement the mount contract, so its state
-        # declaration is derived from it rather than written twice.
-        ryra.services.state.${name} = {
-          inherit (cfg.mount) path owner group;
+        services.nginx.virtualHosts.${web.hostName}.locations."/" = {
+          proxyPass = "http://127.0.0.1:${toString config.services.linkding.port}";
+          proxyWebsockets = true;
+          recommendedProxySettings = false;
+          # SSH forwarding changes the browser port, which Django checks in the CSRF origin.
+          extraConfig = ''
+            proxy_set_header Host ${if web.access == "private" then "$host$ryra_linkding_port" else web.hostName};
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header X-Forwarded-Host ${if web.access == "private" then "$host$ryra_linkding_port" else web.hostName};
+          '';
         };
-
-        # The secret this service needs. WHICH secrets a service wants is its
-        # own business; where they come from is not, which is why this names a
-        # sops key and not a file.
-        shb.sops.secret."${name}-admin".request = cfg.adminCredentials.request;
-        ryra.${name}.adminCredentials.result = config.shb.sops.secret."${name}-admin".result;
+        sops.secrets."${name}-admin" = {
+          owner = name;
+          group = name;
+          mode = "0400";
+          restartUnits = [ "linkding.service" ];
+        };
+        ryra.services.state.${name} = { path = dataDir; owner = name; group = name; };
       };
     };
 }
