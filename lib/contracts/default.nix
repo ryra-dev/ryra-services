@@ -71,6 +71,7 @@ in
 {
   secret = mkContract (import ./secret.nix { inherit lib; });
   backup = mkContract (import ./backup.nix { inherit lib; });
+  auth = mkContract (import ./auth.nix { inherit lib; });
 
   inherit (import ./mount.nix { inherit lib; }) mount;
 }

@@ -25,6 +25,7 @@
     {
       # The mechanism: turns an enable list into modules, web access and backups.
       nixosModules.services = import ./lib/services-module.nix;
+      nixosModules.auth-authelia-lldap = import ./lib/auth-provider.nix;
 
       # Native NixOS Restic, translated to our provider-neutral contract. The
       # service mechanism selects it automatically; exporting it also lets a
@@ -78,6 +79,8 @@
 
       lib.mkAdapter = { pkgs, name, src }:
         import ./adapters/package.nix { inherit pkgs src; service = name; };
+      lib.checkAuth = import ./checks/auth.nix;
+      lib.authLiveTest = import ./checks/auth-live.nix;
 
       lib.withServices = { pkgs, package, services ? self.ryraServices, index ? builtins.mapAttrs (name: svc: svc.meta // { deployable = svc ? module; } // (if svc ? package then { package = name; } else { })) services }:
         let

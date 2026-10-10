@@ -140,6 +140,7 @@ let
 
       settings = opts.settings or { };
       web = opts.web or {};
+      auth = opts.auth or {};
 
       # Optional ownership overrides for generated datasets.
       dataset = opts.dataset or { };
@@ -164,7 +165,9 @@ let
     ) (builtins.filter (s: s.svc != null && !(s.svc ? module) && !(s.svc ? package)) resolved)
     ++ map (
       s: "ryra.services: `${s.qualified}` has no `meta.optionRoot`, so nothing can be wired to it."
-    ) (builtins.filter (s: s.svc != null && s.svc ? module && s.optionRoot == null) resolved);
+    ) (builtins.filter (s: s.svc != null && s.svc ? module && s.optionRoot == null) resolved)
+    ++ map (s: "Ryra service `${s.qualified}` does not support authentication mode `${s.auth.mode or "none"}`.")
+      (builtins.filter (s: s.svc != null && !(builtins.elem (s.auth.mode or "none") (s.svc.meta.web.authModes or [ "none" ]))) resolved);
 
   # Only sound entries reach the wiring. A broken one would otherwise produce a
   # second, uglier failure on top of the assertion that already explains it.
@@ -197,6 +200,10 @@ let
     lib.unique (lib.subtractLists (lib.unique names) names);
 
   webServices = builtins.filter (s: s.svc.meta ? web) enabled;
+  modeOf = s: s.auth.mode or (if config.ryra.services.auth.provider.enable &&
+    builtins.elem "oidc" (s.svc.meta.web.authModes or []) then "oidc" else "none");
+  # Filtering on the configured mode would make module discovery depend on its own fixpoint.
+  authServices = builtins.filter (s: builtins.elem "oidc" (s.svc.meta.web.authModes or [])) enabled;
 
 in
 # Imports and unknown option definitions fail before NixOS assertions run.
@@ -204,7 +211,7 @@ if problems != [ ] then
   throw (lib.concatStringsSep "\n" problems)
 else
 {
-  imports = [ ./web.nix ]
+  imports = [ ./web.nix ./auth-provider.nix ]
     ++ lib.optionals (backupProvider != null) [ backupProvider ]
     ++ lib.optionals (stateProvider != null) [ stateProvider ]
     ++ map (
@@ -302,6 +309,10 @@ else
     {
       environment.systemPackages = map (s: s.svc.package pkgs) packages;
       ryra.services.names = lib.unique (map (s: s.name) (enabled ++ packages));
+      ryra.services.auth.modes = lib.listToAttrs (map (s: lib.nameValuePair s.name (modeOf s)) enabled);
+      ryra.services.auth.requests = lib.listToAttrs (map (s: lib.nameValuePair s.name (lib.mkIf (modeOf s == "oidc") (
+        (configOf s).auth.request
+      ))) authServices);
       ryra.services.web = lib.listToAttrs (map (s: lib.nameValuePair s.name (
         { port = lib.mkDefault s.svc.meta.web.port; } // s.web
       )) webServices);
@@ -337,6 +348,15 @@ else
         }
       ];
     }
+
+    (mkMerge (map (s: lib.setAttrByPath (s.optionRoot ++ [ "auth" ]) (lib.mkIf (modeOf s == "oidc") {
+      request = lib.mkMerge [
+        (lib.mapAttrs (_: lib.mkDefault) (config.ryra.services.auth.provider.clientSecrets.${s.name} or {}))
+        (lib.removeAttrs s.auth [ "mode" ])
+      ];
+      result = config.ryra.services.auth.results.${s.name} or
+        (throw "Ryra service `${s.qualified}` requires an enabled OIDC provider.");
+    })) authServices))
 
     # Provider-neutral backup bus. Services publish requests here; the selected
     # provider publishes results; those results are then returned to the exact

@@ -18,6 +18,11 @@ in {
           default = null;
           description = "DNS name for a public app.";
         };
+        externalUrl = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Stable HTTPS origin for a private app, provided by the machine's private access route.";
+        };
         port = lib.mkOption {
           type = lib.types.port;
           description = "Loopback port used for private access.";
@@ -32,7 +37,8 @@ in {
         url = lib.mkOption {
           type = lib.types.str;
           readOnly = true;
-          default = if config.access == "private" then "http://127.0.0.1:${toString config.port}"
+          default = if config.access == "private" then
+            if config.externalUrl != null then config.externalUrl else "http://127.0.0.1:${toString config.port}"
             else "https://${config.hostName}";
           description = "App address on this machine. Loopback addresses require Ryra's encrypted machine connection.";
         };
@@ -47,6 +53,16 @@ in {
 
   config = lib.mkIf (sites != {}) {
     assertions = [
+      {
+        assertion = builtins.all (site: site.externalUrl == null ||
+          (site.access == "private" && builtins.match "https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?" site.externalUrl != null)) (lib.attrValues sites);
+        message = "Ryra private external URLs must be HTTPS origins without paths, credentials or query strings.";
+      }
+      {
+        assertion = builtins.all (name: ((config.ryra.services.auth.modes or {}).${name} or "none") != "oidc" ||
+          sites.${name}.access == "public" || sites.${name}.externalUrl != null) (builtins.attrNames sites);
+        message = "Ryra private OIDC apps require an explicit stable HTTPS external URL.";
+      }
       {
         assertion = builtins.all (site: site.domain != null &&
           builtins.match "[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+" site.domain != null &&
