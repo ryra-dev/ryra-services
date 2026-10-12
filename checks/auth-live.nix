@@ -21,13 +21,15 @@ in {
       "ryra/nextcloud" = {
         web.externalUrl = nextcloudUrl;
         settings.adminPasswordFile = file "nextcloud-adminpass";
-        auth.consentMode = "implicit";
+        auth.mode = "oidc";
+        auth.consentMode = "explicit";
         auth.authorizationPolicy = "service_users";
       };
       "ryra/linkding" = {
         web.externalUrl = linkdingUrl;
         settings.environmentFile = file "linkding-admin.env";
-        auth.consentMode = "implicit";
+        auth.mode = "oidc";
+        auth.consentMode = "explicit";
         auth.authorizationPolicy = "service_users";
       };
     };

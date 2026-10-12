@@ -52,6 +52,42 @@ client_fetch() {
 fetch() {
   client_fetch --cookie "$jar" --cookie-jar "$jar" "$@"
 }
+authorize() {
+  fetch --location --output "$scratch/application" --write-out '%{url_effective}' "$1" > "$scratch/final-url" || return 1
+  if jq -eR --arg app "$app" 'startswith($app + "/")' "$scratch/final-url" >/dev/null; then
+    return
+  fi
+  phase='explicit synthetic OIDC consent'
+  jq -eR --arg issuer "$issuer" '
+    select(startswith($issuer + "/consent/openid/decision?")) |
+    split("?")[1] | split("&") | map(split("=")) |
+    select(length == 2 and all(.[]; length == 2)) |
+    select((map(.[0]) | sort) == ["flow", "flow_id"]) |
+    map({key:.[0],value:.[1]}) | from_entries |
+    select(.flow == "openid_connect" and
+      (.flow_id | test("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"))) |
+    .flow_id' "$scratch/final-url" > "$scratch/flow-id.json" || return 1
+  jq -r --arg issuer "$issuer" '"url = " + ($issuer + "/api/oidc/consent?flow_id=" + . | tojson)' \
+    "$scratch/flow-id.json" > "$scratch/consent-url" || return 1
+  fetch --config "$scratch/consent-url" > "$scratch/consent" || return 1
+  scopes='["openid","profile","email","groups"]'
+  if [[ "$kind" == linkding ]]; then scopes='["openid","profile","email"]'; fi
+  jq -e --arg client "ryra-$kind" --argjson scopes "$scopes" '
+    .status == "OK" and .data.client_id == $client and
+    (.data.scopes | sort) == ($scopes | sort) and .data.require_login == false
+  ' "$scratch/consent" >/dev/null || return 1
+  jq --slurpfile flow "$scratch/flow-id.json" '.data |
+    {flow_id:$flow[0],client_id,consent:true,pre_configure:false,claims:(.claims // [])}' \
+    "$scratch/consent" > "$scratch/consent-body" || return 1
+  fetch --header "Origin: $issuer" --referer "$issuer/" --header 'Content-Type: application/json' \
+    --data-binary "@$scratch/consent-body" "$issuer/api/oidc/consent" > "$scratch/consent-response" || return 1
+  jq -e --arg issuer "$issuer" '.status == "OK" and
+    (.data.redirect_uri | startswith($issuer + "/api/oidc/authorization?"))' "$scratch/consent-response" >/dev/null || return 1
+  jq -r '"url = " + (.data.redirect_uri | tojson)' "$scratch/consent-response" > "$scratch/consent-redirect" || return 1
+  fetch --location --config "$scratch/consent-redirect" --output "$scratch/application" \
+    --write-out '%{url_effective}' > "$scratch/final-url" || return 1
+  jq -eR --arg app "$app" 'startswith($app + "/")' "$scratch/final-url" >/dev/null
+}
 initial_state() {
   sed -n "s/.*id=\"initial-state-core-$1\" value=\"\([^\"]*\)\".*/\1/p" "$2" \
     | jq --raw-input '@base64d | fromjson'
@@ -67,8 +103,8 @@ jq -e '.status == "OK"' "$scratch/login-response" >/dev/null
 case "$kind" in
   grafana)
     phase='Grafana OIDC login'
-    fetch --location --output "$scratch/application" --write-out '%{url_effective}' "$app/login/generic_oauth" > "$scratch/grafana-final-url"
-    if [[ $(cat "$scratch/grafana-final-url") == *'/login?'* ]]; then
+    authorize "$app/login/generic_oauth"
+    if [[ $(cat "$scratch/final-url") == *'/login?'* ]]; then
       echo 'Grafana returned to its login page after OAuth.' >&2
       exit 1
     fi
@@ -89,10 +125,9 @@ case "$kind" in
       @base64d | fromjson | map(.href | select(test("^/(index.php/)?apps/user_oidc/login/[0-9]+$"))) | first // empty')
     [[ -n "$login_path" ]] || { echo 'Nextcloud login page has no native OIDC login link.' >&2; exit 1; }
     phase='Nextcloud OAuth authorization and callback'
-    if ! fetch --location --output "$scratch/application" --write-out '%{url_effective}' \
-      "$app$login_path" > "$scratch/nextcloud-final-url"; then
+    if ! authorize "$app$login_path"; then
       printf 'Nextcloud OAuth final endpoint: ' >&2
-      sed -E 's/[?#].*$//' "$scratch/nextcloud-final-url" >&2
+      sed -E 's/[?#].*$//' "$scratch/final-url" >&2
       exit 1
     fi
     phase='Nextcloud identity verification'
@@ -159,7 +194,7 @@ case "$kind" in
     ;;
   linkding)
     phase='Linkding OIDC login and profile'
-    fetch --location "$app/oidc/authenticate/" > "$scratch/application"
+    authorize "$app/oidc/authenticate/"
     fetch "$app/api/user/profile/" > "$scratch/profile"
     jq -e '(.version | type) == "string" and (.theme | type) == "string"' "$scratch/profile" >/dev/null
     phase='Linkding native API token creation'
