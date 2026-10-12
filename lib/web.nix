@@ -120,6 +120,7 @@ in {
     ];
 
     services.nginx = {
+      serverNamesHashBucketSize = lib.mkDefault 128;
       enable = true;
       recommendedProxySettings = true;
       recommendedTlsSettings = true;
