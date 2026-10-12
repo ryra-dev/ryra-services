@@ -33,6 +33,20 @@ assert lib.assertMsg (!(selected ? linkding) ||
   (c.services.linkding.settings.LD_ENABLE_OIDC == "True"
    && !(c.services.linkding.settings ? OIDC_RP_CLIENT_SECRET)
    && builtins.elem "/run/linkding-oidc/environment" c.systemd.services.linkding.serviceConfig.EnvironmentFile)) "Linkding must enable native OIDC with a runtime environment file.";
+assert lib.assertMsg (!(selected ? grafana) ||
+  (c.services.grafana.settings."auth.generic_oauth".enabled
+   && c.services.grafana.settings."auth.generic_oauth".use_pkce
+   && c.services.grafana.settings."auth.generic_oauth".auth_style == "InParams"
+   && c.services.grafana.settings."auth.generic_oauth".client_secret == "$__file{/run/credentials/grafana.service/oidc-client}"
+   && builtins.elem "oidc-client:${results.grafana.clientSecretFile}" c.systemd.services.grafana.serviceConfig.LoadCredential
+   && c.services.grafana.settings."auth.generic_oauth".role_attribute_strict
+   && !c.services.grafana.settings."auth.generic_oauth".skip_org_role_sync
+   && c.services.grafana.settings.users.auto_assign_org_role == "Viewer"
+   && !c.services.grafana.settings."auth.anonymous".enabled
+   && c.services.grafana.settings.server.http_addr == "127.0.0.1"
+   && c.services.grafana.settings.server.root_url == "${web.grafana.url}/"
+   && requests.grafana.redirectUris == [ "${web.grafana.url}/login/generic_oauth" ]
+   && requests.grafana.tokenEndpointAuthMethod == "client_secret_post")) "Grafana must use native OAuth with PKCE, runtime secrets, strict role mapping, Viewer defaults and canonical loopback routing.";
 {
   passed = true;
   services = builtins.attrNames selected;

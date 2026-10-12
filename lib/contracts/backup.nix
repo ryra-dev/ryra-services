@@ -67,7 +67,7 @@ in
     {
       backupService = mkOption {
         description = "Systemd service that performs the backup.";
-        type = types.str;
+        type = types.nullOr types.str;
         default = backupService;
       };
 
@@ -80,7 +80,7 @@ in
           what lets a restore runbook survive swapping restic for something
           else.
         '';
-        type = types.str;
+        type = types.nullOr types.str;
         default = restoreScript;
       };
     };

@@ -200,8 +200,7 @@ let
     lib.unique (lib.subtractLists (lib.unique names) names);
 
   webServices = builtins.filter (s: s.svc.meta ? web) enabled;
-  modeOf = s: s.auth.mode or (if config.ryra.services.auth.provider.enable &&
-    builtins.elem "oidc" (s.svc.meta.web.authModes or []) then "oidc" else "none");
+  modeOf = s: s.auth.mode or "none";
   # Filtering on the configured mode would make module discovery depend on its own fixpoint.
   authServices = builtins.filter (s: builtins.elem "oidc" (s.svc.meta.web.authModes or [])) enabled;
 
@@ -211,7 +210,7 @@ if problems != [ ] then
   throw (lib.concatStringsSep "\n" problems)
 else
 {
-  imports = [ ./web.nix ./auth-provider.nix ]
+  imports = [ ./web.nix ./tailscale-serve.nix ./auth-provider.nix ]
     ++ lib.optionals (backupProvider != null) [ backupProvider ]
     ++ lib.optionals (stateProvider != null) [ stateProvider ]
     ++ map (
@@ -310,7 +309,7 @@ else
       environment.systemPackages = map (s: s.svc.package pkgs) packages;
       ryra.services.names = lib.unique (map (s: s.name) (enabled ++ packages));
       ryra.services.auth.modes = lib.listToAttrs (map (s: lib.nameValuePair s.name (modeOf s)) enabled);
-      ryra.services.auth.requests = lib.listToAttrs (map (s: lib.nameValuePair s.name (lib.mkIf (modeOf s == "oidc") (
+      ryra.services.auth.requests = lib.listToAttrs (map (s: lib.nameValuePair s.name (lib.mkIf (modeOf s == "oidc" && !(s.auth ? external)) (
         (configOf s).auth.request
       ))) authServices);
       ryra.services.web = lib.listToAttrs (map (s: lib.nameValuePair s.name (
@@ -326,6 +325,14 @@ else
       }) enabled;
 
       assertions = [
+        {
+          assertion = builtins.all (s: !(s.auth ? external) || modeOf s != "oidc" ||
+            (builtins.match "https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?" s.auth.external.issuerUrl != null &&
+              builtins.all (endpoint: endpoint == null || lib.hasPrefix "https://" endpoint)
+                (map (field: s.auth.external.${field} or null)
+                  [ "authorizationEndpoint" "tokenEndpoint" "userinfoEndpoint" "jwksUri" ]))) authServices;
+          message = "External OIDC providers require an HTTPS issuer and HTTPS endpoints.";
+        }
         {
           assertion =
             stateProvider == null
@@ -352,10 +359,10 @@ else
     (mkMerge (map (s: lib.setAttrByPath (s.optionRoot ++ [ "auth" ]) (lib.mkIf (modeOf s == "oidc") {
       request = lib.mkMerge [
         (lib.mapAttrs (_: lib.mkDefault) (config.ryra.services.auth.provider.clientSecrets.${s.name} or {}))
-        (lib.removeAttrs s.auth [ "mode" ])
+        (lib.removeAttrs s.auth [ "mode" "external" ])
       ];
-      result = config.ryra.services.auth.results.${s.name} or
-        (throw "Ryra service `${s.qualified}` requires an enabled OIDC provider.");
+      result = s.auth.external or (config.ryra.services.auth.results.${s.name} or
+        (throw "Ryra service `${s.qualified}` requires shared sign-in setup or an external OIDC provider."));
     })) authServices))
 
     # Provider-neutral backup bus. Services publish requests here; the selected

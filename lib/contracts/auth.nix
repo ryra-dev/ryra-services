@@ -21,5 +21,10 @@ in {
     issuerUrl = mkOption { type = types.str; default = defaults.issuerUrl or ""; };
     clientId = mkOption { type = types.str; default = defaults.clientId or ""; };
     clientSecretFile = mkOption { type = runtimeFile; };
+    authorizationEndpoint = mkOption { type = types.nullOr types.str; default = null; };
+    tokenEndpoint = mkOption { type = types.nullOr types.str; default = null; };
+    userinfoEndpoint = mkOption { type = types.nullOr types.str; default = null; };
+    jwksUri = mkOption { type = types.nullOr types.str; default = null; };
+    credentialService = mkOption { type = types.nullOr types.str; default = null; };
   };
 }

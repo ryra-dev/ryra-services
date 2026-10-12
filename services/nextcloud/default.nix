@@ -85,7 +85,7 @@
       };
       };
 
-      config = {
+      config = lib.mkMerge [ {
         ryra.services.web.${name}.healthPath = "/status.php";
         services.nextcloud = {
           enable = true;
@@ -95,6 +95,7 @@
           https = web.access == "public";
           database.createLocally = true;
           configureRedis = true;
+          nginx.enableFastcgiRequestBuffering = true;
           extraApps = lib.mkIf oidc {
             # Nextcloud blocks private addresses by default, including the configured tailnet issuer.
             user_oidc = oidcApp.overrideAttrs (old: {
@@ -116,7 +117,7 @@
           };
           settings = {
             default_phone_region = settings.phoneRegion or "NO";
-            trusted_domains = lib.optionals (web.access == "private") ([ "127.0.0.1" "localhost" ]
+            trusted_domains = lib.optionals (web.access != "public") ([ "127.0.0.1" "localhost" ]
               ++ lib.optional (web.externalUrl != null) (lib.removePrefix "https://" web.externalUrl));
             "overwrite.cli.url" = web.url;
           } // lib.optionalAttrs (web.externalUrl != null) {
@@ -132,10 +133,11 @@
           };
         };
 
+        systemd.services.nextcloud-cron.requires = [ "nextcloud-setup.service" ];
         systemd.services.nextcloud-oidc = lib.mkIf oidc {
           wantedBy = [ "multi-user.target" ];
-          requires = [ "nextcloud-setup.service" ];
-          after = [ "nextcloud-setup.service" ];
+          requires = [ "nextcloud-setup.service" ] ++ lib.optional (auth.result.credentialService != null) auth.result.credentialService;
+          after = [ "nextcloud-setup.service" ] ++ lib.optional (auth.result.credentialService != null) auth.result.credentialService;
           restartTriggers = [ (builtins.toJSON auth.request) ];
           serviceConfig = {
             Type = "oneshot";
@@ -155,10 +157,13 @@
           '';
         };
 
-        systemd.services.${lib.removeSuffix ".service" config.ryra.${name}.backup.result.backupService}.serviceConfig = {
-          LoadCredential = config.systemd.services.phpfpm-nextcloud.serviceConfig.LoadCredential or [];
-        };
         ryra.services.state.${name} = { path = dataDir; owner = "nextcloud"; group = "nextcloud"; };
-      };
+      } {
+        systemd.services = lib.optionalAttrs (config.ryra.${name}.backup.result.backupService != null) {
+          ${lib.removeSuffix ".service" config.ryra.${name}.backup.result.backupService}.serviceConfig = {
+            LoadCredential = config.systemd.services.phpfpm-nextcloud.serviceConfig.LoadCredential or [];
+          };
+        };
+      } ];
     };
 }

@@ -34,6 +34,7 @@ in {
   options.ryra.services.auth.provider = {
     enable = lib.mkEnableOption "shared Authelia and LLDAP authentication";
     instance = mkOption { type = types.str; default = "main"; };
+    credentialService = mkOption { type = types.nullOr types.str; default = null; };
     issuerUrl = mkOption { type = types.str; };
     cookieDomain = mkOption { type = types.str; };
     port = mkOption { type = types.port; default = 9091; };
@@ -97,7 +98,11 @@ in {
     ];
     ryra.services.auth.results = lib.mapAttrs (_: request: {
       inherit (request) clientId clientSecretFile;
-      inherit (cfg) issuerUrl;
+      inherit (cfg) issuerUrl credentialService;
+      authorizationEndpoint = "${cfg.issuerUrl}/api/oidc/authorization";
+      tokenEndpoint = "${cfg.issuerUrl}/api/oidc/token";
+      userinfoEndpoint = "${cfg.issuerUrl}/api/oidc/userinfo";
+      jwksUri = "${cfg.issuerUrl}/jwks.json";
     }) config.ryra.services.auth.requests;
     services.lldap = {
       enable = true;

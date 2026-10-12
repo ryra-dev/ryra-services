@@ -24,7 +24,7 @@
       };
       "restic-linkding" = {
         purpose = "Encryption password for Linkding's backup repository";
-        owner = "linkding";
+        owner = "root";
         restart = [ "restic-backups-linkding.service" ];
         generate = { format = "base64"; bytes = 32; };
       };
@@ -40,6 +40,19 @@
       oidc = (config.ryra.services.auth.modes.${name} or "none") == "oidc";
       auth = config.ryra.${name}.auth;
       oidcEnvironment = "/run/${name}-oidc/environment";
+      cfg = config.services.linkding;
+      backup = pkgs.writeShellApplication {
+        name = "ryra-linkding-backup";
+        runtimeInputs = [ pkgs.systemd pkgs.coreutils pkgs.sqlite pkgs.curl ];
+        runtimeEnv = {
+          LINKDING_DATA = dataDir;
+          LINKDING_PORT = toString cfg.port;
+          LINKDING_USER = cfg.user;
+          LINKDING_GROUP = cfg.group;
+          LINKDING_TASKS_UNIT = if (cfg.settings.LD_DISABLE_BACKGROUND_TASKS or "False") == "True" then "" else "linkding-background-tasks.service";
+        };
+        text = builtins.readFile ./backup.sh;
+      };
     in {
       imports = lib.optionals (!(settings ? environmentFile)) [ {
         sops.secrets."${name}-admin" = {
@@ -62,8 +75,13 @@
         default = {};
         type = lib.types.submodule {
           options = contracts.backup.mkRequester {
-            user = name;
+            user = "root";
             sourceDirectories = [ dataDir ];
+            excludePatterns = [ "${dataDir}/db.sqlite3*" "${dataDir}/tasks.sqlite3*" "${dataDir}/.ryra-backup/.new.*" ];
+            beforeBackup = [ "${backup}/bin/ryra-linkding-backup prepare" ];
+            afterBackup = [ "${backup}/bin/ryra-linkding-backup finish" ];
+            beforeRestore = [ "${backup}/bin/ryra-linkding-backup before-restore" ];
+            afterRestore = [ "${backup}/bin/ryra-linkding-backup after-restore" ];
           };
         };
         description = "Linkding backup request and provider result.";
@@ -71,6 +89,16 @@
       };
 
       config = {
+        assertions = [{
+          assertion = !oidc || builtins.all (endpoint: endpoint != null)
+            [ auth.result.authorizationEndpoint auth.result.tokenEndpoint auth.result.userinfoEndpoint auth.result.jwksUri ];
+          message = "Linkding's OIDC provider must supply authorization, token, userinfo and JWKS endpoints.";
+        } {
+          assertion = cfg.database.type == "sqlite" && cfg.dataDir == dataDir
+            && (cfg.settings.LD_DB_ENGINE or "sqlite") == "sqlite"
+            && (cfg.settings._NIXOS_LINKDING_DATA_DIR or dataDir) == dataDir;
+          message = "Linkding automatic backups require the managed SQLite databases and data directory.";
+        }];
         services.nginx.appendHttpConfig = lib.mkIf (web.access == "private") ''
           map $http_host $ryra_linkding_port {
             default "";
@@ -95,10 +123,10 @@
               LD_ENABLE_OIDC = "True";
               LD_DISABLE_LOGIN_FORM = "True";
               OIDC_RP_CLIENT_ID = auth.result.clientId;
-              OIDC_OP_AUTHORIZATION_ENDPOINT = "${auth.result.issuerUrl}/api/oidc/authorization";
-              OIDC_OP_TOKEN_ENDPOINT = "${auth.result.issuerUrl}/api/oidc/token";
-              OIDC_OP_USER_ENDPOINT = "${auth.result.issuerUrl}/api/oidc/userinfo";
-              OIDC_OP_JWKS_ENDPOINT = "${auth.result.issuerUrl}/jwks.json";
+              OIDC_OP_AUTHORIZATION_ENDPOINT = auth.result.authorizationEndpoint;
+              OIDC_OP_TOKEN_ENDPOINT = auth.result.tokenEndpoint;
+              OIDC_OP_USER_ENDPOINT = auth.result.userinfoEndpoint;
+              OIDC_OP_JWKS_ENDPOINT = auth.result.jwksUri;
               OIDC_RP_SCOPES = lib.concatStringsSep " " auth.request.scopes;
               OIDC_USE_PKCE = "True";
               OIDC_VERIFY_SSL = "True";
@@ -106,6 +134,8 @@
             } // (settings.extraSettings or {});
         };
         systemd.services.linkding-oidc = lib.mkIf oidc {
+          requires = lib.optional (auth.result.credentialService != null) auth.result.credentialService;
+          after = lib.optional (auth.result.credentialService != null) auth.result.credentialService;
           before = [ "linkding-setup.service" "linkding.service" "linkding-background-tasks.service" ];
           restartTriggers = [ auth.result.clientSecretFile ];
           serviceConfig = {

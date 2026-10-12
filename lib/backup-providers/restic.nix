@@ -40,10 +40,12 @@
 }:
 
 let
-  requests = config.ryra.services.backup.requests;
+  requests = lib.filterAttrs (name: _: repositoryFor name != null)
+    config.ryra.services.backup.requests;
   unitName = name: "restic-backups-${name}";
   restoreName = name: "ryra-backup-${name}";
   resolved = name: repositoryFor name;
+  lockFile = name: "/run/ryra-backup-locks/${name}.lock";
 
   passwordFile =
     name:
@@ -63,6 +65,7 @@ let
       runtimeInputs = [
         pkgs.jq
         pkgs.systemd
+        pkgs.util-linux
       ];
       text = ''
         usage() {
@@ -80,9 +83,24 @@ let
             shift
             test "$#" -eq 0 || usage
             systemctl start --wait ${unitName name}.service
+            result=$(systemctl show ${unitName name}.service --property=Result --value)
+            if [[ "$result" != success ]]; then
+              echo "Backup did not complete ($result); retry when no restore is running." >&2
+              exit 1
+            fi
             ;;
           restore)
             test "$#" -eq 2 || usage
+            exec 9<>${lib.escapeShellArg (lockFile name)}
+            if ! flock --nonblock 9; then
+              echo 'Another restore holds this backup repository lock.' >&2
+              exit 1
+            fi
+            state=$(systemctl show ${unitName name}.service --property=ActiveState --value)
+            case "$state" in
+              inactive|failed) ;;
+              *) echo "Backup service is busy ($state); retry restore after it finishes." >&2; exit 1 ;;
+            esac
             ${lib.concatStringsSep "\n" requests.${name}.beforeRestore}
             restic-${name} restore "$2" --target /
             ${lib.concatStringsSep "\n" requests.${name}.afterRestore}
@@ -113,7 +131,7 @@ in
           mode = "0400";
           restartUnits = [ "${unitName name}.service" ];
         }
-      ) config.ryra.services.backup.requests;
+      ) requests;
     })
   ];
 
@@ -142,7 +160,9 @@ in
           };
           inherit pruneOpts;
           backupPrepareCommand = lib.concatStringsSep "\n" ([ "set -e" ] ++ request.beforeBackup);
-          backupCleanupCommand = lib.concatStringsSep "\n" ([ "set -e" ] ++ request.afterBackup);
+          # ExecCondition refusal still invokes native ExecStopPost.
+          backupCleanupCommand = lib.concatStringsSep "\n" ([ "set -e" ''if [[ "''${SERVICE_RESULT:-}" != exec-condition ]]; then'' ":" ]
+            ++ request.afterBackup ++ [ "fi" ]);
         }
       ) requests;
 
@@ -150,13 +170,13 @@ in
       # `/srv/backups/<service>` behavior, although an organization storage
       # target is the production default: a directory on the same disk is not
       # disaster recovery.
-      systemd.tmpfiles.rules = lib.flatten (
+      systemd.tmpfiles.rules = [ "d /run/ryra-backup-locks 0755 root root - -" ] ++ lib.flatten (
         lib.mapAttrsToList (
           name: request:
           let
             path = (resolved name).path;
           in
-          lib.optionals (lib.hasPrefix "/" path) [
+          [ "f ${lockFile name} 0600 ${request.user} root - -" ] ++ lib.optionals (lib.hasPrefix "/" path) [
             "d '${path}' 0750 ${request.user} root - -"
           ]
         ) requests
@@ -166,10 +186,10 @@ in
 
       ryra.services.backup.results = lib.mapAttrs (
         name: _: {
-          backupService = "${unitName name}.service";
-          restoreScript = restoreName name;
+          backupService = if requests ? ${name} then "${unitName name}.service" else null;
+          restoreScript = if requests ? ${name} then restoreName name else null;
         }
-      ) requests;
+      ) config.ryra.services.backup.requests;
     }
 
     # A short-lived organization storage lease may need a unit to materialize
@@ -180,7 +200,9 @@ in
         let
           service = (resolved name).credentialService or null;
         in
-        lib.nameValuePair (unitName name) (lib.mkIf (service != null) {
+        lib.nameValuePair (unitName name) ({
+          serviceConfig.ExecCondition = "${pkgs.util-linux}/bin/flock --nonblock ${lib.escapeShellArg (lockFile name)} ${pkgs.coreutils}/bin/true";
+        } // lib.optionalAttrs (service != null) {
           after = [ service ];
           requires = [ service ];
         })

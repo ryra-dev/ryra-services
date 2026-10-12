@@ -14,6 +14,10 @@
       enabled = builtins.fromJSON (builtins.readFile ./modules/ryra/services.json);
       settings = import ./modules/ryra/settings.nix;
       web = builtins.fromJSON (builtins.readFile ./modules/ryra/web.json);
+      auth = if builtins.pathExists ./modules/ryra/auth.json
+        then builtins.fromJSON (builtins.readFile ./modules/ryra/auth.json) else {};
+      backups = if builtins.pathExists ./modules/ryra/backup.json
+        then builtins.fromJSON (builtins.readFile ./modules/ryra/backup.json) else {};
     in {
       ryraDeploy = {};
       ryraCatalog.fsn1.ryra = { flake = "github:ryra-dev/ryra-services"; inherit (ryra-services) index; };
@@ -23,9 +27,17 @@
           sops-nix.nixosModules.default
           (ryra-services.nixosModules.services {
             registries.ryra = ryra-services;
+            backupRepositoryFor = name:
+              if backups ? ${name} then (if backups.${name} == null then null else {
+                path = backups.${name}.repository;
+                inherit (backups.${name}) environmentFile;
+              }) else settings.backup.repositories.${name} or { path = "/srv/backups/${name}"; };
             services = builtins.listToAttrs (map (name: {
               inherit name;
-              value = (settings.${name} or {}) // { web = web.${name} or {}; };
+              value = (settings.${name} or {}) // { web = web.${name} or {}; }
+                // nixpkgs.lib.optionalAttrs (auth ? ${name}) {
+                  auth = (settings.${name}.auth or {}) // auth.${name};
+                };
             }) enabled);
           })
           {

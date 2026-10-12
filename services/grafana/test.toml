@@ -1,0 +1,36 @@
+[[tests]]
+name = "grafana"
+
+[[tests.checks]]
+action = "wait"
+unit = "grafana.service"
+timeout = 90
+
+[[tests.checks]]
+action = "wait"
+unit = "nginx.service"
+timeout = 60
+
+[[tests.checks]]
+action = "http"
+name = "application health"
+url = "$SERVICE_URL/api/health"
+status = 200
+poll = { interval = 3, attempts = 10 }
+
+[[tests.checks]]
+action = "http"
+name = "anonymous user API is denied"
+url = "$SERVICE_URL/api/user"
+status = 401
+
+[[tests.checks]]
+action = "shell"
+name = "backend listens on loopback"
+run = "ss -tln | grep -q '127.0.0.1:3000' && ! ss -tln | grep -qE '(0\\.0\\.0\\.0|\\*|\\[::\\]):3000'"
+
+[[tests.checks]]
+action = "shell"
+name = "backup snapshot exists"
+run = "sudo ryra-backup-grafana exec snapshots --json | jq -e 'length > 0'"
+timeout = 60

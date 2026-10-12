@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ $# != 5 ]]; then
-  echo 'Usage: bash scripts/auth-smoke.sh ISSUER APP_URL nextcloud|linkding CREDENTIALS_JSON EXPECTED_USER' >&2
+  echo 'Usage: bash scripts/auth-smoke.sh ISSUER APP_URL nextcloud|linkding|grafana CREDENTIALS_JSON EXPECTED_USER' >&2
   exit 2
 fi
 issuer=${1%/}
@@ -9,7 +9,7 @@ app=${2%/}
 kind=$3
 credentials=$4
 expected_user=$5
-case "$kind" in nextcloud|linkding) ;; *) echo 'Unsupported auth smoke service.' >&2; exit 2 ;; esac
+case "$kind" in nextcloud|linkding|grafana) ;; *) echo 'Unsupported auth smoke service.' >&2; exit 2 ;; esac
 [[ "$issuer" == https://* && "$app" == https://* ]] || { echo 'Auth smoke requires stable HTTPS origins.' >&2; exit 2; }
 umask 077
 scratch=$(mktemp -d)
@@ -65,14 +65,36 @@ fetch --header "Origin: $issuer" --referer "$issuer/" --header 'Content-Type: ap
   --data-binary "@$scratch/login" "$issuer/api/firstfactor" > "$scratch/login-response"
 jq -e '.status == "OK"' "$scratch/login-response" >/dev/null
 case "$kind" in
+  grafana)
+    phase='Grafana OIDC login'
+    fetch --location --output "$scratch/application" --write-out '%{url_effective}' "$app/login/generic_oauth" > "$scratch/grafana-final-url"
+    if [[ $(cat "$scratch/grafana-final-url") == *'/login?'* ]]; then
+      echo 'Grafana returned to its login page after OAuth.' >&2
+      exit 1
+    fi
+    phase='Grafana identity and Viewer verification'
+    fetch "$app/api/user" > "$scratch/profile"
+    jq -e --arg user "$expected_user" '.login == $user and .isGrafanaAdmin == false' "$scratch/profile" >/dev/null
+    fetch "$app/api/user/orgs" > "$scratch/orgs"
+    jq -e 'length > 0 and all(.[]; .role == "Viewer")' "$scratch/orgs" >/dev/null
+    phase='Grafana anonymous access denial'
+    status=$(client_fetch --output /dev/null --write-out '%{http_code}' "$app/api/user" || true)
+    [[ "$status" == 401 ]] || { echo 'Anonymous Grafana user API did not return 401.' >&2; exit 1; }
+    ;;
   nextcloud)
-    phase='Nextcloud OIDC login'
+    phase='Nextcloud login page'
     fetch --location "$app/login" > "$scratch/login-page"
     initial_logins=$(sed -n 's/.*id="initial-state-core-alternativeLogins" value="\([^"]*\)".*/\1/p' "$scratch/login-page")
     login_path=$(printf '%s' "$initial_logins" | jq --raw-input --raw-output '
       @base64d | fromjson | map(.href | select(test("^/(index.php/)?apps/user_oidc/login/[0-9]+$"))) | first // empty')
     [[ -n "$login_path" ]] || { echo 'Nextcloud login page has no native OIDC login link.' >&2; exit 1; }
-    fetch --location "$app$login_path" > "$scratch/application"
+    phase='Nextcloud OAuth authorization and callback'
+    if ! fetch --location --output "$scratch/application" --write-out '%{url_effective}' \
+      "$app$login_path" > "$scratch/nextcloud-final-url"; then
+      printf 'Nextcloud OAuth final endpoint: ' >&2
+      sed -E 's/[?#].*$//' "$scratch/nextcloud-final-url" >&2
+      exit 1
+    fi
     phase='Nextcloud identity verification'
     fetch --header 'OCS-APIRequest: true' "$app/ocs/v2.php/cloud/user?format=json" > "$scratch/profile"
     jq -e --arg user "$expected_user" '.ocs.meta.statuscode == 200 and .ocs.data.id == $user' "$scratch/profile" >/dev/null
@@ -186,7 +208,9 @@ case "$kind" in
     [[ "$status" == 401 ]] || { echo 'Revoked Linkding token did not return 401.' >&2; exit 1; }
     ;;
 esac
-if [[ "$kind" == nextcloud ]]; then
+if [[ "$kind" == grafana ]]; then
+  echo 'Grafana OIDC identity, Viewer role, no server administration and anonymous API denial passed.'
+elif [[ "$kind" == nextcloud ]]; then
   echo 'Nextcloud OIDC identity, native login-v2 approval, WebDAV/CalDAV/CardDAV 207 and DAV write/read/delete passed; smoke app password revoked.'
 else
   echo 'Linkding OIDC session and native token API create/read/delete passed; revoked token returned 401. Confirm identity mapping in the service database.'
