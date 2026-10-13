@@ -1,0 +1,7 @@
+Forgejo hosts Git repositories, issues and pull requests with its own accounts. It uses SQLite and the Ryra web contract: private access by default, with optional public HTTPS or Tailscale access. Clone and push over HTTP(S); SSH and public registration are disabled.
+
+The initial administrator is `ryra-admin`, with a generated password in `forgejo-adminpass`. Sign in and change that password, then create other accounts from Forgejo's administration page. `settings.adminUser` and `settings.adminEmail` select the initial account; Forgejo reserves the username `admin`. `settings.adminPasswordFile` can supply a runtime password file. Restarting or applying again preserves an existing account and its password.
+
+The private web port is 8084 and the loopback backend port is 3001. Set `web.port` or `settings.port` if needed. For Git from another machine, use a reachable HTTPS address or forward the private port through SSH. A Ryra browser connection only carries browser traffic.
+
+Hourly encrypted backups briefly stop Forgejo and capture `/var/lib/forgejo`, including repositories, SQLite, attachments and generated encryption keys. The service restarts even if a backup fails. Use `sudo ryra-backup-forgejo backup`, `snapshots`, and `restore SNAPSHOT`. Restore to an empty state directory with the same Forgejo version first; restoring over existing files does not remove newer repositories. Keep the declaration and backup password with your recovery materials.

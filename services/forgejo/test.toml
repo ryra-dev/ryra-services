@@ -1,0 +1,19 @@
+[[tests]]
+name = "forgejo"
+
+[[tests.checks]]
+action = "wait"
+unit = "forgejo.service"
+timeout = 90
+
+[[tests.checks]]
+action = "wait"
+unit = "nginx.service"
+timeout = 60
+
+[[tests.checks]]
+action = "http"
+name = "application health"
+url = "$SERVICE_URL/api/healthz"
+status = 200
+poll = { interval = 3, attempts = 10 }
