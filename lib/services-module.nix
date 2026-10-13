@@ -316,6 +316,7 @@ else
         { port = lib.mkDefault s.svc.meta.web.port; } // s.web
       )) webServices);
       ryra.services.resolved = map (s: {
+        provides = s.svc.meta.provides or [];
         inherit (s)
           qualified
           name

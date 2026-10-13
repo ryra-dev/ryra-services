@@ -109,9 +109,11 @@ keeps its own login. Installing it does not sign every machine user into that ac
 Apps are private by default. Their loopback addresses in `/etc/ryra/apps.json`
 are reachable through an encrypted Ryra machine connection. Public access is an
 explicit configuration choice: give the app a DNS name and nginx requests and
-renews its ACME certificate. DNS must point to the machine and the provider's
-firewall must allow ports 80 and 443. The NixOS firewall opens those ports only
-when a public app is configured. Public HTTPS does not remove the app's login.
+renews its ACME certificate. Direct HTTPS terminates TLS on the machine. DNS must
+point to it without a proxy; Cloudflare DNS-only works. Ryra coordinates the
+declared ports on supported cloud firewalls and NixOS. HTTPS needs TCP 443;
+HTTP-01 certificates also need TCP 80, while DNS-01 or supplied certificates do
+not. Public HTTPS does not remove the app's login.
 
 Ryra stages these choices in `modules/ryra/web.json`, alongside `services.json`:
 
@@ -123,3 +125,40 @@ Private access can specify a different port with
 `{ "access": "private", "port": 8083 }`. Duplicate app addresses are refused.
 The file is part of the organization configuration and its Git export. Credentials
 remain in the vault and encrypted machine secrets, never in this file.
+
+Gateway access uses `{ "access": "gateway", "provider": "ryra/cloudflare",
+"domain": "bookmarks.example.com" }`. The enabled provider owns DNS, the outbound
+tunnel and edge HTTPS. Cloudflare terminates TLS and can read HTTP traffic, so
+choose this only if you want that tradeoff. Direct HTTPS needs no tunnel or
+proxy. App ports behind a gateway remain on loopback. Other registries can provide
+`web-gateway` and declare `serviceConnections` without app-specific client code.
+Cloudflare needs a connected account with Tunnel Edit and zone-scoped DNS Edit,
+Zone Read, SSL and Certificates Read, and Zone Settings Read. Automatic edge TLS
+supports an active full zone's apex or one subdomain label. Before removing the
+provider or its credential, deploy removal of its gateway routes so owned DNS and
+tunnels can be deleted. The shared backup system includes gateway ownership state.
+Backup and restore briefly stop its connectors; restore that state before
+recreating the same host's routes.
+
+Certificates are automatic. For your own certificate, set
+`"ryra/linkding".web.certificate.mode = "supplied";` in
+`modules/ryra/settings.nix` (Configuration in the desktop). On the service machine,
+place `fullchain.pem` (leaf first, then intermediates) and `key.pem` in
+`/var/lib/ryra/certificates/<hostname>/` before applying. You can use `ryra files`
+to reach that machine. With the default nginx user/group, use root:nginx ownership,
+0750 for the directory and 0640 for the files. Create the directory with those
+permissions if this is the first deployment. To keep files elsewhere, set
+`certificateFile` and `keyFile` to their absolute runtime paths. Nginx cannot read
+home directories in its service sandbox. Never put private keys in Nix or git.
+
+Nginx validates supplied files before starting or reloading. For replacement,
+put both new files in place, run `sudo -u nginx ryra-check-certificates`, then
+`sudo systemctl reload nginx` if it succeeds. `ryra-check-certificates --help`
+lists the configured paths. Validation checks the hostname, dates and matching
+unencrypted key; it does not establish browser trust. Renew supplied certificates
+yourself. Cloudflare Origin CA certificates need Cloudflare in front of them.
+
+For automatic DNS validation without opening port 80, set `web.certificate` to
+`{ mode = "dns"; dnsProvider = "cloudflare"; credentialsFile = "/run/secrets/acme-dns"; }`.
+The provider credentials stay outside Nix and git. These advanced settings apply
+to direct HTTPS; gateways and Tailscale manage their own certificates.
