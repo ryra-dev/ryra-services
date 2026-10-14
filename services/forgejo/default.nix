@@ -9,7 +9,7 @@
     needs = [ "secrets" "backup" ];
     provides = [];
     web.port = 8084;
-    web.authModes = [ "none" ];
+    web.authModes = [ "none" "oidc" ];
     secrets = {
       "forgejo-adminpass" = {
         purpose = "Forgejo initial administrator password";
@@ -32,6 +32,8 @@
       cfg = config.services.forgejo;
       dataDir = "/var/lib/${name}";
       web = config.ryra.services.web.${name};
+      oidc = (config.ryra.services.auth.modes.${name} or "none") == "oidc";
+      auth = config.ryra.${name}.auth;
       adminUser = settings.adminUser or "ryra-admin";
       adminPasswordFile = settings.adminPasswordFile or config.sops.secrets."${name}-adminpass".path;
       adminQuery = "SELECT count(*) FROM user WHERE lower_name = lower('${lib.replaceStrings [ "'" ] [ "''" ] adminUser}');";
@@ -50,22 +52,33 @@
           restartUnits = [ "forgejo.service" ];
         };
       }];
-      options.ryra.${name}.backup = lib.mkOption {
-        default = {};
-        type = lib.types.submodule { options = contracts.backup.mkRequester {
-          user = "root";
-          sourceDirectories = [ dataDir ];
-          beforeBackup = [ stop ];
-          afterBackup = [ start ];
-          beforeRestore = [ ''
-            ${stop}
-            ${pkgs.coreutils}/bin/rm -f ${lib.escapeShellArgs [ "${cfg.database.path}-wal" "${cfg.database.path}-shm" "${cfg.database.path}-journal" ]}
-          '' ];
-          afterRestore = [ ''
-            ${pkgs.coreutils}/bin/chown -R ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} ${lib.escapeShellArg dataDir}
-            ${start}
-          '' ];
-        }; };
+      options.ryra.${name} = {
+        auth = lib.mkOption {
+          default = {};
+          type = lib.types.submodule { options = contracts.auth.mkRequester {
+            clientId = "ryra-${name}";
+            redirectUris = [ "${web.url}/user/oauth2/Ryra/callback" ];
+            scopes = [ "openid" "profile" "email" "groups" ];
+            tokenEndpointAuthMethod = "client_secret_basic";
+          }; };
+        };
+        backup = lib.mkOption {
+          default = {};
+          type = lib.types.submodule { options = contracts.backup.mkRequester {
+            user = "root";
+            sourceDirectories = [ dataDir ];
+            beforeBackup = [ stop ];
+            afterBackup = [ start ];
+            beforeRestore = [ ''
+              ${stop}
+              ${pkgs.coreutils}/bin/rm -f ${lib.escapeShellArgs [ "${cfg.database.path}-wal" "${cfg.database.path}-shm" "${cfg.database.path}-journal" ]}
+            '' ];
+            afterRestore = [ ''
+              ${pkgs.coreutils}/bin/chown -R ${lib.escapeShellArg "${cfg.user}:${cfg.group}"} ${lib.escapeShellArg dataDir}
+              ${start}
+            '' ];
+          }; };
+        };
       };
       config = {
         assertions = [
@@ -94,8 +107,16 @@
               DISABLE_SSH = true;
             };
             service = {
-              DISABLE_REGISTRATION = true;
+              DISABLE_REGISTRATION = !oidc;
+              ALLOW_ONLY_EXTERNAL_REGISTRATION = oidc;
+              SHOW_REGISTRATION_BUTTON = false;
               REQUIRE_SIGNIN_VIEW = true;
+            };
+            openid = { ENABLE_OPENID_SIGNIN = false; ENABLE_OPENID_SIGNUP = false; };
+            oauth2_client = {
+              ENABLE_AUTO_REGISTRATION = oidc;
+              ACCOUNT_LINKING = "login";
+              USERNAME = "nickname";
             };
             repository.DEFAULT_PRIVATE = "private";
             session.COOKIE_SECURE = lib.hasPrefix "https://" web.url;
@@ -109,7 +130,11 @@
           };
         };
         systemd.services.forgejo = {
-          serviceConfig.LoadCredential = [ "admin:${adminPasswordFile}" ];
+          serviceConfig.RestartSec = "5s";
+          serviceConfig.LoadCredential = [ "admin:${adminPasswordFile}" ]
+            ++ lib.optional oidc "oidc-client:${auth.result.clientSecretFile}";
+          requires = lib.optionals oidc (lib.optional (auth.result.credentialService != null) auth.result.credentialService);
+          after = lib.optionals oidc (lib.optional (auth.result.credentialService != null) auth.result.credentialService);
           preStart = lib.mkAfter ''
             count=$(${pkgs.sqlite}/bin/sqlite3 -readonly ${lib.escapeShellArg cfg.database.path} ${lib.escapeShellArg adminQuery})
             if [ "$count" = 0 ]; then
@@ -119,6 +144,25 @@
                 --password "$(${pkgs.coreutils}/bin/cat "$CREDENTIALS_DIRECTORY/admin")" \
                 --admin --must-change-password=false
             fi
+            ${if oidc then ''
+              source_id=$(${pkgs.sqlite}/bin/sqlite3 -readonly ${lib.escapeShellArg cfg.database.path} "SELECT id FROM login_source WHERE name = 'Ryra' AND type = 6;")
+              if [ -n "$source_id" ]; then
+                # Updating an active source performs discovery, tying every restart to issuer availability.
+                ${pkgs.sqlite}/bin/sqlite3 ${lib.escapeShellArg cfg.database.path} "UPDATE login_source SET is_active = 0 WHERE name = 'Ryra' AND type = 6;"
+                command=(update-oauth --id "$source_id")
+              else
+                command=(add-oauth)
+              fi
+              ${lib.getExe cfg.package} admin auth "''${command[@]}" \
+                --name Ryra --provider openidConnect \
+                --key ${lib.escapeShellArg auth.result.clientId} \
+                --secret "$(${pkgs.coreutils}/bin/cat "$CREDENTIALS_DIRECTORY/oidc-client")" \
+                --auto-discover-url ${lib.escapeShellArg "${lib.removeSuffix "/" auth.result.issuerUrl}/.well-known/openid-configuration"} \
+                --scopes ${lib.escapeShellArg (lib.concatStringsSep " " auth.request.scopes)}
+              ${pkgs.sqlite}/bin/sqlite3 ${lib.escapeShellArg cfg.database.path} "UPDATE login_source SET is_active = 1 WHERE name = 'Ryra' AND type = 6;"
+            '' else ''
+              ${pkgs.sqlite}/bin/sqlite3 ${lib.escapeShellArg cfg.database.path} "UPDATE login_source SET is_active = 0 WHERE name = 'Ryra' AND type = 6;"
+            ''}
           '';
         };
       };

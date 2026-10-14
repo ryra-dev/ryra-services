@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ $# != 5 ]]; then
-  echo 'Usage: bash scripts/auth-smoke.sh ISSUER APP_URL nextcloud|linkding|grafana CREDENTIALS_JSON EXPECTED_USER' >&2
+  echo 'Usage: bash scripts/auth-smoke.sh ISSUER APP_URL nextcloud|linkding|grafana|forgejo CREDENTIALS_JSON EXPECTED_USER' >&2
   exit 2
 fi
 issuer=${1%/}
@@ -9,7 +9,7 @@ app=${2%/}
 kind=$3
 credentials=$4
 expected_user=$5
-case "$kind" in nextcloud|linkding|grafana) ;; *) echo 'Unsupported auth smoke service.' >&2; exit 2 ;; esac
+case "$kind" in nextcloud|linkding|grafana|forgejo) ;; *) echo 'Unsupported auth smoke service.' >&2; exit 2 ;; esac
 [[ "$issuer" == https://* && "$app" == https://* ]] || { echo 'Auth smoke requires stable HTTPS origins.' >&2; exit 2; }
 umask 077
 scratch=$(mktemp -d)
@@ -101,6 +101,19 @@ fetch --header "Origin: $issuer" --referer "$issuer/" --header 'Content-Type: ap
   --data-binary "@$scratch/login" "$issuer/api/firstfactor" > "$scratch/login-response"
 jq -e '.status == "OK"' "$scratch/login-response" >/dev/null
 case "$kind" in
+  forgejo)
+    phase='Forgejo OIDC login and identity'
+    authorize "$app/user/oauth2/Ryra"
+    phase='Forgejo signed-in profile and administration denial'
+    fetch "$app/user/settings" > "$scratch/profile"
+    profile_user=$(sed -n 's/.*<input name="name" value="\([^"]*\)".*/\1/p' "$scratch/profile")
+    [[ "$profile_user" == "$expected_user" ]] || { echo 'Forgejo profile identity did not match.' >&2; exit 1; }
+    status=$(fetch --no-fail-with-body --output /dev/null --write-out '%{http_code}' "$app/admin")
+    [[ "$status" == 403 ]] || { echo 'Shared Forgejo user was not refused site administration.' >&2; exit 1; }
+    phase='Forgejo anonymous access denial'
+    status=$(client_fetch --no-fail-with-body --output /dev/null --write-out '%{http_code}' "$app/api/v1/user")
+    [[ "$status" == 403 ]] || { echo 'Anonymous Forgejo user API did not return 403.' >&2; exit 1; }
+    ;;
   grafana)
     phase='Grafana OIDC login'
     authorize "$app/login/generic_oauth"
@@ -243,7 +256,9 @@ case "$kind" in
     [[ "$status" == 401 ]] || { echo 'Revoked Linkding token did not return 401.' >&2; exit 1; }
     ;;
 esac
-if [[ "$kind" == grafana ]]; then
+if [[ "$kind" == forgejo ]]; then
+  echo 'Forgejo OIDC identity, ordinary account and anonymous API denial passed.'
+elif [[ "$kind" == grafana ]]; then
   echo 'Grafana OIDC identity, Viewer role, no server administration and anonymous API denial passed.'
 elif [[ "$kind" == nextcloud ]]; then
   echo 'Nextcloud OIDC identity, native login-v2 approval, WebDAV/CalDAV/CardDAV 207 and DAV write/read/delete passed; smoke app password revoked.'
