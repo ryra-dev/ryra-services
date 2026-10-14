@@ -8,7 +8,7 @@
     optionRoot = [ "ryra" "forgejo" ];
     needs = [ "secrets" "backup" ];
     provides = [];
-    web.port = 8084;
+    web.port = 8085;
     web.authModes = [ "none" "oidc" ];
     secrets = {
       "forgejo-adminpass" = {
@@ -151,6 +151,9 @@
                 ${pkgs.sqlite}/bin/sqlite3 ${lib.escapeShellArg cfg.database.path} "UPDATE login_source SET is_active = 0 WHERE name = 'Ryra' AND type = 6;"
                 command=(update-oauth --id "$source_id")
               else
+                ${pkgs.curl}/bin/curl --fail --silent --show-error --output /dev/null \
+                  --retry 60 --retry-all-errors --retry-delay 1 --retry-max-time 60 --max-time 5 \
+                  ${lib.escapeShellArg "${lib.removeSuffix "/" auth.result.issuerUrl}/.well-known/openid-configuration"}
                 command=(add-oauth)
               fi
               ${lib.getExe cfg.package} admin auth "''${command[@]}" \

@@ -35,6 +35,8 @@ let
   backup = shared.ryra.services.backup.requests.authelia;
 in
 assert lib.assertMsg (failures native == []) "Managed Authelia configuration failed NixOS assertions.";
+assert native.services.authelia.instances.main.settingsFiles == [];
+assert !(native.services.authelia.instances.main.environmentVariables ? AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE);
 assert lib.assertMsg (failures shared == []) "Managed Authelia with Grafana failed NixOS assertions.";
 assert failures (evaluate { origin = null; }) != [];
 assert failures (evaluate { accountFile = "/nix/store/initial-account"; }) != [];

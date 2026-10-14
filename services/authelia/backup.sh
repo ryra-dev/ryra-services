@@ -22,13 +22,14 @@ check_database() {
 }
 case "${1:-}" in
   prepare)
+    start_auth
     scratch=
     trap 'if [[ -n "$scratch" ]]; then rm -rf "$scratch"; fi; start_auth' EXIT
     stop_auth
     mkdir -p "$state/.ryra-backup"
     scratch=$(mktemp -d "$state/.ryra-backup/.new.XXXXXX")
-    sqlite3 "$state/lldap/users.db" ".backup '$scratch/lldap.sqlite'"
-    sqlite3 "$state/authelia/db.sqlite3" ".backup '$scratch/authelia.sqlite'"
+    sqlite3 -readonly "$state/lldap/users.db" ".backup '$scratch/lldap.sqlite'"
+    sqlite3 -readonly "$state/authelia/db.sqlite3" ".backup '$scratch/authelia.sqlite'"
     check_database "$scratch/lldap.sqlite" users
     check_database "$scratch/authelia.sqlite" migrations
     cp -a "$state/keys" "$state/clients" "$scratch/"

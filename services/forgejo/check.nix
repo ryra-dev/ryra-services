@@ -2,22 +2,25 @@ let
   nixpkgs = (builtins.getFlake "path:${toString ../..}").inputs.nixpkgs;
   lib = nixpkgs.lib;
   file = name: "/run/ryra-forgejo-test/${name}";
-  evaluate = { web ? {}, settings ? {}, shared ? false, mode ? "none", external ? null }:
+  evaluate = { web ? {}, settings ? {}, shared ? false, managed ? false, mode ? "none", external ? null }:
     (lib.nixosSystem {
       system = "x86_64-linux";
       modules = [ (import ../../lib/services-module.nix {
-        registries.ryra.ryraServices.forgejo = import ./.;
-        services."ryra/forgejo" = {
+        registries.ryra.ryraServices = { forgejo = import ./.; authelia = import ../authelia; };
+        services = { "ryra/forgejo" = {
           web = lib.optionalAttrs shared { externalUrl = "https://forgejo.test.invalid"; } // web;
           settings = { adminPasswordFile = "/run/forgejo-admin"; } // settings;
           auth = { inherit mode; } // lib.optionalAttrs (external != null) { inherit external; };
-        };
+        }; } // lib.optionalAttrs managed { "ryra/authelia" = {
+          web.externalUrl = "https://auth.test.invalid";
+          settings.initialAccountFile = file "authelia-admin";
+        }; };
         backupPasswordFileFor = _: "/run/forgejo-restic";
       }) {
         boot.isContainer = true;
         system.stateVersion = "26.05";
         security.acme.defaults.email = "admin@example.com";
-        ryra.services.auth.provider = lib.mkIf shared {
+        ryra.services.auth.provider = lib.mkIf (shared && !managed) {
           enable = true;
           issuerUrl = "https://auth.test.invalid";
           cookieDomain = "test.invalid";
@@ -33,6 +36,7 @@ let
   public = evaluate { web = { access = "public"; domain = "git.example.com"; }; };
   custom = evaluate { web.port = 8184; settings = { port = 3101; adminUser = "owner"; }; };
   oidc = evaluate { shared = true; mode = "oidc"; };
+  managed = evaluate { shared = true; managed = true; mode = "oidc"; };
   optOut = evaluate { shared = true; };
   external = evaluate {
     mode = "oidc";
@@ -45,9 +49,9 @@ let
   };
   backup = private.ryra.services.backup.requests.forgejo;
 in
-assert lib.assertMsg (builtins.all (c: failures c == []) [ private public custom oidc optOut external ]) "A Forgejo configuration failed NixOS assertions.";
+assert lib.assertMsg (builtins.all (c: failures c == []) [ private public custom oidc managed optOut external ]) "A Forgejo configuration failed NixOS assertions.";
 assert private.services.forgejo.settings.server.HTTP_ADDR == "127.0.0.1";
-assert private.services.forgejo.settings.server.ROOT_URL == "http://127.0.0.1:8084/";
+assert private.services.forgejo.settings.server.ROOT_URL == "http://127.0.0.1:8085/";
 assert private.services.forgejo.settings.server.DISABLE_SSH;
 assert private.services.forgejo.settings.service.DISABLE_REGISTRATION;
 assert private.services.forgejo.settings.service.REQUIRE_SIGNIN_VIEW;
@@ -81,6 +85,7 @@ assert oidc.services.forgejo.settings.oauth2_client.ACCOUNT_LINKING == "login";
 assert builtins.elem "oidc-client:${file "client"}" oidc.systemd.services.forgejo.serviceConfig.LoadCredential;
 assert builtins.elem "ryra-auth-credentials.service" oidc.systemd.services.forgejo.requires;
 assert oidc.systemd.services.forgejo.serviceConfig.RestartSec == "5s";
+assert managed.ryra.services.web.forgejo.port != managed.ryra.services.web.authelia.port;
 assert failures (evaluate { shared = true; mode = "oidc"; web.externalUrl = null; }) != [];
 assert !external.services.lldap.enable && external.services.authelia.instances == {};
 assert external.ryra.services.auth.requests == {};
@@ -88,6 +93,6 @@ assert builtins.elem "oidc-client:${file "external-client"}" external.systemd.se
 assert !builtins.elem "ryra-auth-credentials.service" external.systemd.services.forgejo.requires;
 {
   authCheck = import ../../checks/auth.nix { config = oidc; inherit lib; };
-  passed = [ "private" "public" "custom-ports" "native-login" "runtime-credential" "store-secret-denial" "backup-contract" "shared-oidc" "shared-opt-out" "external-oidc" "canonical-origin-required" ];
+  passed = [ "private" "public" "custom-ports" "native-login" "runtime-credential" "store-secret-denial" "backup-contract" "shared-oidc" "managed-authelia" "shared-opt-out" "external-oidc" "canonical-origin-required" ];
   forgejoVersion = private.services.forgejo.package.version;
 }

@@ -4,6 +4,7 @@ let
   cfg = config.ryra.services.auth.provider;
   runtimeFile = types.pathWith { absolute = true; inStore = false; };
   clients = config.ryra.services.auth.requests // cfg.extraClients;
+  oidc = clients != {};
   names = builtins.attrNames clients;
   indexed = lib.imap0 (index: name: { inherit name; credential = "oidc-client-${toString index}"; client = clients.${name}; }) names;
   registrations = map (entry: {
@@ -25,9 +26,10 @@ let
     jwt = cfg.secrets.jwtSecretFile;
     session = cfg.secrets.sessionSecretFile;
     storage = cfg.secrets.storageEncryptionKeyFile;
+    ldap-bind = cfg.secrets.ldapBindPasswordFile;
+  } // lib.optionalAttrs oidc {
     hmac = cfg.secrets.oidcHmacSecretFile;
     signing = cfg.secrets.oidcIssuerPrivateKeyFile;
-    ldap-bind = cfg.secrets.ldapBindPasswordFile;
   };
 in {
   imports = [ ./auth.nix ];
@@ -144,14 +146,15 @@ in {
         AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET_FILE = "%d/jwt";
         AUTHELIA_SESSION_SECRET_FILE = "%d/session";
         AUTHELIA_STORAGE_ENCRYPTION_KEY_FILE = "%d/storage";
-        AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE = "%d/hmac";
         AUTHELIA_AUTHENTICATION_BACKEND_LDAP_PASSWORD_FILE = "%d/ldap-bind";
+      } // lib.optionalAttrs oidc {
+        AUTHELIA_IDENTITY_PROVIDERS_OIDC_HMAC_SECRET_FILE = "%d/hmac";
       };
-      settingsFiles = [ (pkgs.writeText "ryra-oidc-clients.json" (lib.replaceStrings
+      settingsFiles = lib.optionals oidc [ (pkgs.writeText "ryra-oidc-clients.json" (lib.replaceStrings
         (map (entry: builtins.toJSON "__RYRA_${entry.credential}__") indexed)
         (map (entry: "{{ mustEnv \"CREDENTIALS_DIRECTORY\" | printf \"%s/${entry.credential}\" | secret | trim | msquote }}") indexed)
         (builtins.toJSON {
-        identity_providers.oidc = lib.optionalAttrs (clients != {}) { clients = registrations; };
+        identity_providers.oidc.clients = registrations;
       }))) (pkgs.writeText "ryra-oidc-jwks.yaml" ''
         identity_providers:
           oidc:
