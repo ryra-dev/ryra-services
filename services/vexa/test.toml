@@ -1,0 +1,53 @@
+[[tests]]
+name = "vexa"
+
+[[tests.checks]]
+action = "wait"
+unit = "vexa.service"
+timeout = 600
+
+[[tests.checks]]
+action = "wait"
+unit = "nginx.service"
+timeout = 60
+
+[[tests.checks]]
+action = "shell"
+name = "all running containers are healthy"
+run = "sudo vexa-compose ps --format json | jq -s -e 'length == 9 and all(.Health == \"healthy\")' >/dev/null"
+timeout = 120
+
+[[tests.checks]]
+action = "http"
+name = "API health"
+url = "http://127.0.0.1:18056/health"
+status = 200
+
+[[tests.checks]]
+action = "http"
+name = "API refuses an anonymous visitor"
+url = "http://127.0.0.1:18056/meetings"
+status = 401
+
+[[tests.checks]]
+action = "http"
+name = "web UI answers through nginx"
+url = "$SERVICE_URL/"
+poll = { interval = 3, attempts = 10 }
+status = 200
+
+[[tests.checks]]
+action = "shell"
+name = "backends listen on loopback only"
+run = "for p in 18056 18057 18083 13000; do ss -tln | grep -q \"127.0.0.1:$p \" && ! ss -tln | grep -qE \"(0\\.0\\.0\\.0|\\*|\\[::\\]):$p \"; done"
+
+[[tests.checks]]
+action = "shell"
+name = "credentials are an environment file"
+run = "sudo grep -q '^ADMIN_TOKEN=' /run/secrets/vexa-environment"
+
+[[tests.checks]]
+action = "shell"
+name = "backup snapshot exists"
+run = "sudo ryra-backup-vexa exec snapshots --json | jq -e 'length > 0'"
+timeout = 180
