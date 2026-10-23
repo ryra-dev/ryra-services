@@ -309,7 +309,7 @@ else
       environment.systemPackages = map (s: s.svc.package pkgs) packages;
       ryra.services.names = lib.unique (map (s: s.name) (enabled ++ packages));
       ryra.services.auth.modes = lib.listToAttrs (map (s: lib.nameValuePair s.name (modeOf s)) enabled);
-      ryra.services.auth.requests = lib.listToAttrs (map (s: lib.nameValuePair s.name (lib.mkIf (modeOf s == "oidc" && !(s.auth ? external)) (
+      ryra.services.auth.requests = lib.listToAttrs (map (s: lib.nameValuePair s.name (lib.mkIf (modeOf s == "oidc" && (s.auth.external or null) == null) (
         (configOf s).auth.request
       ))) authServices);
       ryra.services.web = lib.listToAttrs (map (s: lib.nameValuePair s.name (
@@ -327,7 +327,7 @@ else
 
       assertions = [
         {
-          assertion = builtins.all (s: !(s.auth ? external) || modeOf s != "oidc" ||
+          assertion = builtins.all (s: (s.auth.external or null) == null || modeOf s != "oidc" ||
             (builtins.match "https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[^?#[:space:]]*)?" s.auth.external.issuerUrl != null &&
               builtins.all (endpoint: endpoint == null || lib.hasPrefix "https://" endpoint)
                 (map (field: s.auth.external.${field} or null)
@@ -362,7 +362,7 @@ else
         (lib.mapAttrs (_: lib.mkDefault) (config.ryra.services.auth.provider.clientSecrets.${s.name} or {}))
         (lib.removeAttrs s.auth [ "mode" "external" ])
       ];
-      result = s.auth.external or (config.ryra.services.auth.results.${s.name} or
+      result = if (s.auth.external or null) != null then s.auth.external else (config.ryra.services.auth.results.${s.name} or
         (throw "Ryra service `${s.qualified}` requires shared sign-in setup or an external OIDC provider."));
     })) authServices))
 

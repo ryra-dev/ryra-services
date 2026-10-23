@@ -3,17 +3,17 @@ let
   nixpkgs = (builtins.getFlake "path:${toString root}").inputs.nixpkgs;
   lib = nixpkgs.lib;
   file = name: "/run/ryra-grafana-test/${name}";
-  evaluate = { shared ? false, mode ? null, settings ? {}, web ? {}, external ? null }:
+  evaluate = { shared ? false, mode ? null, settings ? {}, web ? {}, external ? null, others ? {} }:
     (lib.nixosSystem {
       system = "x86_64-linux";
       modules = [ (import ../../lib/services-module.nix {
-        registries.ryra.ryraServices.grafana = import ./.;
-        services."ryra/grafana" = {
+        registries.ryra.ryraServices = { grafana = import ./.; nextcloud = import ../nextcloud; };
+        services = { "ryra/grafana" = {
           settings = { adminPasswordFile = file "admin"; secretKeyFile = file "key"; } // settings;
           web = lib.optionalAttrs shared { externalUrl = "https://grafana.test.invalid"; } // web;
           auth = lib.optionalAttrs (mode != null || shared) { mode = if mode == null then "oidc" else mode; }
-            // lib.optionalAttrs (external != null) { inherit external; };
-        };
+            // { inherit external; };
+        }; } // others;
         backupPasswordFileFor = _: file "restic";
       }) {
         boot.isContainer = true;
@@ -48,9 +48,30 @@ let
     };
   };
   customer = evaluate customerOptions;
+  mixed = evaluate {
+    shared = true;
+    others."ryra/nextcloud" = {
+      settings.adminPasswordFile = file "nextcloud-admin";
+      web.externalUrl = "https://files.customer.test";
+      auth = {
+        mode = "oidc";
+        external = {
+          issuerUrl = "https://identity.customer.test/realms/files/";
+          clientId = "external-nextcloud";
+          clientSecretFile = file "external-nextcloud";
+        };
+      };
+    };
+  };
   authCheck = import ../../checks/auth.nix { config = oidc; inherit lib; };
 in
-assert lib.assertMsg (builtins.all (c: failures c == []) [ native oidc optOut custom roles customer ]) "A Grafana configuration failed NixOS assertions.";
+assert lib.assertMsg (builtins.all (c: failures c == []) [ native oidc optOut custom roles customer mixed ]) "An authentication configuration failed NixOS assertions.";
+assert builtins.attrNames mixed.ryra.services.auth.requests == [ "grafana" ];
+assert mixed.ryra.grafana.auth.result.issuerUrl == "https://auth.test.invalid";
+assert mixed.ryra.nextcloud.auth.result.issuerUrl == "https://identity.customer.test/realms/files/";
+assert lib.hasInfix "https://identity.customer.test/realms/files/.well-known/openid-configuration" mixed.systemd.services.nextcloud-oidc.script;
+assert builtins.stringLength mixed.systemd.services.nextcloud-oidc.serviceConfig.ExecStart > 0;
+assert !(builtins.elem "ryra-auth-credentials.service" mixed.systemd.services.nextcloud-oidc.requires);
 assert builtins.all (c: builtins.stringLength c.systemd.services.grafana.serviceConfig.ExecStart > 0) [ native oidc optOut custom roles ];
 assert native.ryra.services.auth.requests == {};
 assert !native.services.grafana.settings.auth.disable_login_form;
@@ -83,6 +104,6 @@ assert lib.hasInfix "integrity_check" (lib.concatStringsSep "\n" native.ryra.ser
 assert native.services.restic.backups.grafana.timerConfig.OnCalendar == "hourly";
 {
   inherit authCheck;
-  passed = [ "native" "shared-oidc" "shared-opt-out" "custom-auth" "customer-provider" "explicit-roles" "anonymous-denial" "store-secret-denial" "canonical-origin-required" "backup-hooks" ];
+  passed = [ "native" "shared-oidc" "shared-opt-out" "custom-auth" "customer-provider" "mixed-providers" "explicit-roles" "anonymous-denial" "store-secret-denial" "canonical-origin-required" "backup-hooks" ];
   grafanaVersion = native.services.grafana.package.version;
 }
