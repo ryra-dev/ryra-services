@@ -34,11 +34,11 @@ let
   optOut = evaluate { shared = true; mode = "none"; };
   custom = evaluate { mode = "none"; settings.extraSettings."auth.generic_oauth" = { enabled = true; client_secret = "$__file{/run/custom-secret}"; }; };
   roles = evaluate { shared = true; settings = { allowedGroups = [ "grafana-users" ]; roleAttributePath = "contains(groups, 'grafana-admins') && 'GrafanaAdmin' || 'Viewer'"; allowAssignGrafanaAdmin = true; }; };
-  customer = evaluate {
+  customerOptions = {
     mode = "oidc";
     web.externalUrl = "https://grafana.customer.test";
     external = {
-      issuerUrl = "https://identity.customer.test";
+      issuerUrl = "https://identity.customer.test/realms/company/";
       clientId = "customer-grafana";
       clientSecretFile = file "customer-client";
       authorizationEndpoint = "https://identity.customer.test/authorize";
@@ -47,6 +47,7 @@ let
       jwksUri = "https://identity.customer.test/keys";
     };
   };
+  customer = evaluate customerOptions;
   authCheck = import ../../checks/auth.nix { config = oidc; inherit lib; };
 in
 assert lib.assertMsg (builtins.all (c: failures c == []) [ native oidc optOut custom roles customer ]) "A Grafana configuration failed NixOS assertions.";
@@ -70,6 +71,9 @@ assert customer.systemd.services.grafana.serviceConfig.LoadCredential == [
   "admin:${file "admin"}" "key:${file "key"}" "oidc-client:${file "customer-client"}"
 ];
 assert !builtins.elem "ryra-auth-credentials.service" customer.systemd.services.grafana.requires;
+assert builtins.all (issuerUrl: failures (evaluate (customerOptions // {
+  external = customerOptions.external // { inherit issuerUrl; };
+})) != []) [ "http://identity.customer.test" "https://identity.customer.test/realm?query" "https://identity.customer.test/realm#fragment" ];
 assert failures (evaluate { settings.extraSettings."auth.anonymous".enabled = true; }) != [];
 assert failures (evaluate { settings.secretKeyFile = "/nix/store/unsafe-key"; }) != [];
 assert failures (evaluate { shared = true; web.externalUrl = null; }) != [];

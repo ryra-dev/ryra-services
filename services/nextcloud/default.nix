@@ -150,7 +150,7 @@
             ${occ} user_oidc:provider Ryra \
               --clientid=${lib.escapeShellArg auth.result.clientId} \
               --clientsecret-file="$CREDENTIALS_DIRECTORY/oidc-client" \
-              --discoveryuri=${lib.escapeShellArg "${auth.result.issuerUrl}/.well-known/openid-configuration"} \
+              --discoveryuri=${lib.escapeShellArg "${issuerPrefix}.well-known/openid-configuration"} \
               --scope=${lib.escapeShellArg (lib.concatStringsSep " " auth.request.scopes)} \
               --mapping-uid=preferred_username --unique-uid=0 \
               --mapping-display-name=name --mapping-email=email

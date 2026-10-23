@@ -328,7 +328,7 @@ else
       assertions = [
         {
           assertion = builtins.all (s: !(s.auth ? external) || modeOf s != "oidc" ||
-            (builtins.match "https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?" s.auth.external.issuerUrl != null &&
+            (builtins.match "https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?(/[^?#[:space:]]*)?" s.auth.external.issuerUrl != null &&
               builtins.all (endpoint: endpoint == null || lib.hasPrefix "https://" endpoint)
                 (map (field: s.auth.external.${field} or null)
                   [ "authorizationEndpoint" "tokenEndpoint" "userinfoEndpoint" "jwksUri" ]))) authServices;
