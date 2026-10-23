@@ -24,6 +24,13 @@ let
     builtins.match "[0-9]+(\\.[0-9]+){3}" domain == null &&
     !builtins.any (suffix: lib.hasSuffix suffix domain) [ ".localhost" ".local" ".invalid" ".ts.net" ];
   privateHttps = lib.filterAttrs (_: site: site.access == "private" && site.privateHttps) sites;
+  network = lib.filterAttrs (_: site: site.access == "network") sites;
+  networkHosts = lib.unique (map (site: site.domain) (lib.attrValues network));
+  networkChallenge = pkgs.writeShellApplication {
+    name = "ryra-network-challenge";
+    runtimeInputs = [ pkgs.curl pkgs.jq pkgs.openssh pkgs.coreutils ];
+    text = builtins.readFile ./network-challenge.sh;
+  };
   directHttps = public // privateHttps;
   automatic = lib.filterAttrs (_: site: site.certificate.mode == "automatic") directHttps;
   dns = lib.filterAttrs (_: site: site.certificate.mode == "dns") directHttps;
@@ -76,7 +83,7 @@ in {
     type = lib.types.attrsOf (lib.types.submodule ({ name, config, ... }: {
       options = {
         access = lib.mkOption {
-          type = lib.types.enum [ "private" "public" "tailnet" "tailnet_service" "gateway" ];
+          type = lib.types.enum [ "private" "network" "public" "tailnet" "tailnet_service" "gateway" ];
           default = "private";
           description = "Private apps listen on loopback for an encrypted Ryra connection. Public apps serve HTTPS directly; gateway apps use a configured web gateway.";
         };
@@ -90,6 +97,11 @@ in {
           default = null;
           description = "DNS name for a public or gateway app, Tailscale machine or named Tailscale service.";
         };
+        server = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "Ryra control plane that gives the machine its network name and verifies certificate challenges.";
+        };
         hostTags = lib.mkOption {
           type = lib.types.listOf lib.types.str;
           default = [];
@@ -102,7 +114,7 @@ in {
         };
         externalUrl = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
-          default = if config.access == "tailnet" && config.domain != null then
+          default = if builtins.elem config.access [ "tailnet" "network" ] && config.domain != null then
             "https://${config.domain}:${toString config.port}" else
             if builtins.elem config.access [ "tailnet_service" "gateway" ] && config.domain != null then
               "https://${config.domain}" else null;
@@ -194,6 +206,19 @@ in {
   config = lib.mkIf (sites != {}) {
     assertions = [
       {
+        assertion = builtins.all (site: validDomain site.domain && site.server != null &&
+          builtins.match "https?://[a-zA-Z0-9.:-]+(/[^ ?#]*)?" site.server != null &&
+          site.externalUrl == "https://${site.domain}:${toString site.port}" &&
+          !site.privateHttps && site.certificate.mode == "automatic") (lib.attrValues network);
+        message = "Ryra network apps require the machine's private domain, its Ryra server and automatic certificates.";
+      }
+      {
+        assertion = builtins.all (site: builtins.all (other:
+          site.domain != other.domain || site.server == other.server
+        ) (lib.attrValues network)) (lib.attrValues network);
+        message = "Ryra apps sharing a network name must use the same Ryra server.";
+      }
+      {
         assertion = builtins.all (site: site.externalUrl == null ||
           (site.access != "public" && (origin site).valid &&
             (site.access != "gateway" || site.externalUrl == site.url))) (lib.attrValues sites);
@@ -264,13 +289,17 @@ in {
       recommendedTlsSettings = true;
       virtualHosts = lib.listToAttrs (lib.mapAttrsToList (_: site: lib.nameValuePair site.hostName (
         if site.access != "public" then {
-          listen = [ { addr = "127.0.0.1"; port = portOf site; ssl = site.privateHttps; } ];
+          listen = [ { addr = "127.0.0.1"; port = portOf site; ssl = site.privateHttps || site.access == "network"; } ];
           extraConfig = lib.optionalString (site.access == "gateway") ''
             absolute_redirect off;
             if ($http_x_forwarded_proto = "http") {
               return 308 ${site.url}$request_uri;
             }
           '';
+        } // lib.optionalAttrs (site.access == "network") {
+          serverName = site.domain;
+          onlySSL = true;
+          useACMEHost = site.domain;
         } // lib.optionalAttrs site.privateHttps ({
           serverName = (origin site).host;
           onlySSL = true;
@@ -288,7 +317,7 @@ in {
       }) challengeHosts);
     };
 
-    networking.hosts."127.0.0.1" = tlsHosts;
+    networking.hosts."127.0.0.1" = tlsHosts ++ networkHosts;
     environment.systemPackages = lib.optional (supplied != {}) certificateCheck;
     systemd.tmpfiles.rules = lib.optionals (supplied != {}) ([
       "d /var/lib/ryra/certificates 0750 root ${config.services.nginx.group} -"
@@ -297,13 +326,22 @@ in {
     services.nginx.preStart = lib.mkIf (supplied != {}) (lib.mkBefore "${lib.getExe certificateCheck}");
     systemd.services.nginx.serviceConfig.ExecReload = lib.mkIf (supplied != {})
       (lib.mkBefore [ (lib.getExe certificateCheck) ]);
-    security.acme.acceptTerms = lib.mkIf (automatic != {} || dns != {}) true;
+    security.acme.acceptTerms = lib.mkIf (automatic != {} || dns != {} || network != {}) true;
     security.acme.certs = lib.listToAttrs (map (site: lib.nameValuePair (certificateHost site) {
       inherit (site.certificate) dnsProvider;
       environmentFile = site.certificate.credentialsFile;
       webroot = null;
       group = config.services.nginx.group;
-    }) (lib.attrValues dns));
+    }) (lib.attrValues dns)) // lib.listToAttrs (map (site: lib.nameValuePair site.domain {
+      dnsProvider = "exec";
+      webroot = null;
+      group = config.services.nginx.group;
+      credentialFiles.RYRA_NETWORK_HOST_KEY_FILE = "/etc/ssh/ssh_host_ed25519_key";
+      environmentFile = pkgs.writeText "ryra-network-acme" ''
+        EXEC_PATH=${lib.getExe networkChallenge}
+        RYRA_NETWORK_SERVER=${lib.removeSuffix "/" site.server}
+      '';
+    }) (lib.attrValues network));
     networking.firewall.allowedTCPPorts = lib.optionals (automatic != {}) [ 80 ]
       ++ lib.optionals (public != {}) [ 443 ];
 
