@@ -96,9 +96,9 @@
           database.createLocally = true;
           configureRedis = true;
           nginx.enableFastcgiRequestBuffering = true;
-          extraApps = lib.mkIf oidc {
+          extraApps = {
             # Nextcloud blocks private addresses by default, including the configured tailnet issuer.
-            user_oidc = oidcApp.overrideAttrs (old: {
+            user_oidc = if !oidc then oidcApp else oidcApp.overrideAttrs (old: {
               postPatch = (old.postPatch or "") + ''
                 substituteInPlace lib/Helper/HttpClientHelper.php \
                   --replace-fail 'if ($this->shouldDisableSSLVerification()) {' ${lib.escapeShellArg ''
@@ -134,19 +134,18 @@
         };
 
         systemd.services.nextcloud-cron.requires = [ "nextcloud-setup.service" ];
-        systemd.services.nextcloud-oidc = lib.mkIf oidc {
+        systemd.services.nextcloud-oidc = {
           wantedBy = [ "multi-user.target" ];
-          requires = [ "nextcloud-setup.service" ] ++ lib.optional (auth.result.credentialService != null) auth.result.credentialService;
-          after = [ "nextcloud-setup.service" ] ++ lib.optional (auth.result.credentialService != null) auth.result.credentialService;
-          restartTriggers = [ (builtins.toJSON auth.request) ];
+          requires = [ "nextcloud-setup.service" ] ++ lib.optional (oidc && auth.result.credentialService != null) auth.result.credentialService;
+          after = [ "nextcloud-setup.service" ] ++ lib.optional (oidc && auth.result.credentialService != null) auth.result.credentialService;
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
             User = "nextcloud";
             LoadCredential = (config.systemd.services.phpfpm-nextcloud.serviceConfig.LoadCredential or [])
-              ++ [ "oidc-client:${auth.result.clientSecretFile}" ];
+              ++ lib.optional oidc "oidc-client:${auth.result.clientSecretFile}";
           };
-          script = ''
+          script = if oidc then ''
             ${occ} user_oidc:provider Ryra \
               --clientid=${lib.escapeShellArg auth.result.clientId} \
               --clientsecret-file="$CREDENTIALS_DIRECTORY/oidc-client" \
@@ -154,6 +153,12 @@
               --scope=${lib.escapeShellArg (lib.concatStringsSep " " auth.request.scopes)} \
               --mapping-uid=preferred_username --unique-uid=0 \
               --mapping-display-name=name --mapping-email=email
+          '' else ''
+            providers=$(${occ} user_oidc:provider --output=json)
+            managed=$(${pkgs.jq}/bin/jq -r 'any(.[]; .identifier == "Ryra")' <<< "$providers")
+            if [[ "$managed" == true ]]; then
+              ${occ} user_oidc:provider:delete --force Ryra
+            fi
           '';
         };
 
