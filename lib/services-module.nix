@@ -210,7 +210,7 @@ if problems != [ ] then
   throw (lib.concatStringsSep "\n" problems)
 else
 {
-  imports = [ ./web.nix ./tailscale-serve.nix ./auth-provider.nix ]
+  imports = [ ./web.nix ./local-https.nix ./tailscale-serve.nix ./auth-provider.nix ]
     ++ lib.optionals (backupProvider != null) [ backupProvider ]
     ++ lib.optionals (stateProvider != null) [ stateProvider ]
     ++ map (

@@ -43,6 +43,13 @@
       auth = config.ryra.${name}.auth;
       oidcEnvironment = "/run/${name}-oidc/environment";
       cfg = config.services.linkding;
+      httpsUrl = lib.hasPrefix "https://" web.url;
+      # Linkding imports one custom settings file (prod.py: `from .custom import *`) and exposes no
+      # env var for the session cookie, so the Secure flag goes here, beside the proxy scheme header.
+      customSettings = pkgs.writeText "linkding-custom-settings.py" (
+        builtins.readFile ./proxy-settings.py
+        + lib.optionalString httpsUrl "SESSION_COOKIE_SECURE = True\n"
+      );
       backup = pkgs.writeShellApplication {
         name = "ryra-linkding-backup";
         runtimeInputs = [ pkgs.systemd pkgs.coreutils pkgs.sqlite pkgs.curl ];
@@ -131,9 +138,9 @@
         '';
         services.linkding = {
           enable = true;
-          package = lib.mkIf oidc (pkgs.linkding.overrideAttrs (old: {
+          package = lib.mkIf (oidc || httpsUrl) (pkgs.linkding.overrideAttrs (old: {
             postPatch = (old.postPatch or "") + ''
-              cp ${./proxy-settings.py} bookmarks/settings/custom.py
+              cp ${customSettings} bookmarks/settings/custom.py
             '';
           }));
           user = name;
@@ -154,6 +161,9 @@
               OIDC_RP_SCOPES = lib.concatStringsSep " " auth.request.scopes;
               OIDC_USE_PKCE = "True";
               OIDC_VERIFY_SSL = "True";
+              # Verify the OIDC issuer against the machine's system CA trust, not mozilla-django-oidc's
+              # bundled certifi, which cannot know this machine's own local-HTTPS CA.
+              NIX_SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
               LD_CSRF_TRUSTED_ORIGINS = web.url;
             } // (settings.extraSettings or {});
         };
