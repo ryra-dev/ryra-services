@@ -77,7 +77,43 @@ let
       runtimeFile certificate.certificateFile && runtimeFile certificate.keyFile
     else certificate.certificateFile == null && certificate.keyFile == null);
   portOf = site: if site.privateHttps then (origin site).port else site.port;
+  # Every loopback port that carries another person's traffic must be one an ordinary login
+  # cannot bind, so it cannot take the port while the service restarts and receive that
+  # traffic. The kernel reserves ports below this for CAP_NET_BIND_SERVICE.
+  unprivilegedPortStart = 1024;
+  guards = config.ryra.services.loopbackGuards;
+  guardPorts = lib.concatMap (g: g.ports) guards;
+  frontDoorPorts = map portOf (lib.attrValues private);
+  loopbackPorts = frontDoorPorts ++ guardPorts;
+  # Ports a browser refuses to open (ERR_UNSAFE_PORT and the like), restricted to the privileged
+  # range. A front-door port is reached by a browser through the tunnel, so one of these would be
+  # a blank page rather than the app. Chromium, Firefox and Safari keep near-identical lists; this
+  # is their shared privileged-range subset.
+  browserUnsafePorts = [
+    1 7 9 11 13 15 17 19 20 21 22 23 25 37 42 43 53 69 77 79 87 95 101 102 103 104 109 110 111
+    113 115 117 119 123 135 137 139 143 161 179 389 427 465 512 513 514 515 526 530 531 532 540
+    548 554 556 563 587 601 636 989 990 993 995
+  ];
 in {
+  options.ryra.services.loopbackGuards = lib.mkOption {
+    default = [];
+    internal = true;
+    type = lib.types.listOf (lib.types.submodule {
+      options = {
+        unit = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          description = "systemd unit confined to these ports, or null when a container runtime binds them (privilege alone keeps a login out).";
+        };
+        ports = lib.mkOption { type = lib.types.listOf lib.types.port; description = "Loopback ports it listens on."; };
+      };
+    });
+    description = ''
+      Loopback listeners a service binds for another process to reach, each confined to its
+      own ports by lib/loopback.nix. Asserted below to be privileged.
+    '';
+  };
+
   options.ryra.services.web = lib.mkOption {
     default = {};
     type = lib.types.attrsOf (lib.types.submodule ({ name, config, ... }: {
@@ -277,6 +313,31 @@ in {
         ) (lib.attrValues directHttps)) (lib.attrValues directHttps);
         message = "Ryra apps sharing a certificate hostname must use the same certificate settings.";
       }
+      {
+        assertion = builtins.all (port: port < unprivilegedPortStart) frontDoorPorts;
+        message = "A private Ryra app's loopback listen port must be below ${toString unprivilegedPortStart} so an ordinary login cannot take it while nginx restarts. Choose a privileged port for its address.";
+      }
+      {
+        assertion = builtins.all (port: port < unprivilegedPortStart) guardPorts;
+        message = "A Ryra service's backend loopback port must be below ${toString unprivilegedPortStart} so an ordinary login cannot take it while the service restarts. The port is chosen in lib/ports.nix.";
+      }
+      {
+        assertion = builtins.length loopbackPorts == builtins.length (lib.unique loopbackPorts);
+        message = "Two Ryra loopback listeners share a port. Each front-door and backend port in lib/ports.nix must be distinct.";
+      }
+      {
+        assertion = builtins.all (port: !(builtins.elem port browserUnsafePorts)) frontDoorPorts;
+        message = "A private Ryra app's front-door port is one browsers refuse to open, so the app would load as a blank page through the tunnel. Choose a port outside the browser restricted-ports list in lib/ports.nix.";
+      }
+      {
+        assertion = builtins.all (g: (config.systemd.services.${g.unit}.serviceConfig.SocketBindDeny or [ ]) != [ ])
+          (builtins.filter (g: g.unit != null) guards);
+        message = "A Ryra service binds a loopback port without a bind restriction. Apply lib/loopback.nix so a compromised service cannot take another's port.";
+      }
+      {
+        assertion = (config.boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start" or unprivilegedPortStart) >= unprivilegedPortStart;
+        message = "net.ipv4.ip_unprivileged_port_start must stay at ${toString unprivilegedPortStart} or above, or an ordinary login could bind a Ryra service's port.";
+      }
     ] ++ lib.mapAttrsToList (name: site: {
       assertion = validCertificate site.certificate;
       message = "Ryra app `${name}` requires only dnsProvider and credentialsFile in dns certificate mode, only certificateFile and keyFile in supplied mode, and no extra fields in automatic mode. Files must use absolute runtime paths without whitespace, dot segments or Nix store paths.";
@@ -318,6 +379,9 @@ in {
     };
 
     networking.hosts."127.0.0.1" = tlsHosts ++ networkHosts;
+    # Keep the privileged-port boundary where the assertions above assume it. Pinned, so a
+    # machine that lowers it to expose a Ryra port fails evaluation rather than quietly opening one.
+    boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start" = lib.mkDefault unprivilegedPortStart;
     environment.systemPackages = lib.optional (supplied != {}) certificateCheck;
     systemd.tmpfiles.rules = lib.optionals (supplied != {}) ([
       "d /var/lib/ryra/certificates 0750 root ${config.services.nginx.group} -"

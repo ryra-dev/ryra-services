@@ -8,7 +8,7 @@
     optionRoot = [ "ryra" "authelia" ];
     needs = [ "secrets" "backup" ];
     provides = [];
-    web.port = 8084;
+    web.port = (import ../../lib/ports.nix).authelia.frontDoor;
     secrets = {
       "authelia-admin" = {
         purpose = "Initial shared sign-in account";

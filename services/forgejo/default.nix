@@ -8,7 +8,7 @@
     optionRoot = [ "ryra" "forgejo" ];
     needs = [ "secrets" "backup" ];
     provides = [];
-    web.port = 8085;
+    web.port = (import ../../lib/ports.nix).forgejo.frontDoor;
     web.authModes = [ "none" "oidc" ];
     secrets = {
       "forgejo-adminpass" = {
@@ -29,6 +29,8 @@
   module = { name, contracts, settings }:
     { config, lib, pkgs, ... }:
     let
+      ports = import ../../lib/ports.nix;
+      guard = import ../../lib/loopback.nix { inherit lib; };
       cfg = config.services.forgejo;
       dataDir = "/var/lib/${name}";
       web = config.ryra.services.web.${name};
@@ -80,7 +82,7 @@
           }; };
         };
       };
-      config = {
+      config = lib.mkMerge [ (guard { unit = "forgejo"; ports = [ cfg.settings.server.HTTP_PORT ]; }) {
         assertions = [
           {
             assertion = lib.hasPrefix "/" adminPasswordFile && !lib.hasPrefix "/nix/store/" adminPasswordFile;
@@ -102,7 +104,7 @@
           settings = {
             server = {
               HTTP_ADDR = "127.0.0.1";
-              HTTP_PORT = settings.port or 3001;
+              HTTP_PORT = settings.port or ports.forgejo.backend;
               ROOT_URL = "${web.url}/";
               DISABLE_SSH = true;
             };
@@ -168,6 +170,6 @@
             ''}
           '';
         };
-      };
+      } ];
     };
 }

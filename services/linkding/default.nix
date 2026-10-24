@@ -7,7 +7,7 @@
     optionRoot = [ "ryra" "linkding" ];
     needs = [ "secrets" "backup" ];
     provides = [];
-    web.port = 8081;
+    web.port = (import ../../lib/ports.nix).linkding.frontDoor;
     web.authModes = [ "none" "oidc" ];
     secrets = {
       "linkding-admin" = {
@@ -35,6 +35,8 @@
   module = { name, contracts, settings }:
     { config, lib, pkgs, ... }:
     let
+      ports = import ../../lib/ports.nix;
+      guard = import ../../lib/loopback.nix { inherit lib; };
       dataDir = "/var/lib/${name}";
       web = config.ryra.services.web.${name};
       oidc = (config.ryra.services.auth.modes.${name} or "none") == "oidc";
@@ -54,7 +56,29 @@
         text = builtins.readFile ./backup.sh;
       };
     in {
-      imports = lib.optionals (!(settings ? environmentFile)) [ {
+      imports = [
+        # uWSGI, built with libcap, resets its capabilities at startup and loses the
+        # CAP_NET_BIND_SERVICE systemd grants it, so it cannot bind its privileged loopback
+        # port. nixpkgs hardcodes uWSGI's ini and ExecStart with no option to pass
+        # `cap = net_bind_service`, so the flag is wrapped onto the binary. The overlay lives in
+        # a module that does not consume `pkgs`, or defining nixpkgs.overlays here would recurse.
+        # uWSGI is used only by this service, and the flag is a no-op for a process not granted
+        # the capability.
+        ({ ... }: {
+          nixpkgs.overlays = [
+            (final: prev: {
+              # overrideAttrs (not symlinkJoin) so `.override`, which the linkding package calls
+              # to build its python plugin, and `meta` survive.
+              uwsgi = prev.uwsgi.overrideAttrs (o: {
+                nativeBuildInputs = (o.nativeBuildInputs or [ ]) ++ [ final.makeWrapper ];
+                postFixup = (o.postFixup or "") + ''
+                  wrapProgram $out/bin/uwsgi --append-flags '--cap net_bind_service'
+                '';
+              });
+            })
+          ];
+        })
+      ] ++ lib.optionals (!(settings ? environmentFile)) [ {
         sops.secrets."${name}-admin" = {
           owner = name;
           group = name;
@@ -88,7 +112,7 @@
       };
       };
 
-      config = {
+      config = lib.mkMerge [ (guard { unit = "linkding"; ports = [ cfg.port ]; }) {
         assertions = [{
           assertion = !oidc || builtins.all (endpoint: endpoint != null)
             [ auth.result.authorizationEndpoint auth.result.tokenEndpoint auth.result.userinfoEndpoint auth.result.jwksUri ];
@@ -116,7 +140,7 @@
           group = name;
           inherit dataDir;
           address = "127.0.0.1";
-          port = settings.port or 9090;
+          port = settings.port or ports.linkding.backend;
           environmentFile = settings.environmentFile or config.sops.secrets."${name}-admin".path;
           settings = { LD_LOG_X_FORWARDED_FOR = "true"; }
             // lib.optionalAttrs oidc {
@@ -186,6 +210,6 @@
           '';
         };
         ryra.services.state.${name} = { path = dataDir; owner = name; group = name; };
-      };
+      } ];
     };
 }

@@ -8,7 +8,7 @@
     optionRoot = [ "ryra" "vexa" ];
     needs = [ "secrets" "backup" ];
     provides = [ "meeting-transcription" ];
-    web.port = 8086;
+    web.port = (import ../../lib/ports.nix).vexa.frontDoor;
     secrets = {
       "vexa-environment" = {
         purpose = "Vexa database, internal API, session and recording-storage credentials";
@@ -33,12 +33,13 @@
 
   module = { name, contracts, settings }: { config, lib, pkgs, ... }:
     let
+      ports = import ../../lib/ports.nix;
       web = config.ryra.services.web.${name};
       environmentFile = settings.environmentFile or config.sops.secrets."${name}-environment".path;
       dataDir = "/var/lib/${name}";
       network = "${name}-meetings";
-      apiPort = settings.apiPort or 18056;
-      uiPort = settings.uiPort or 13000;
+      apiPort = settings.apiPort or ports.vexa.api;
+      uiPort = settings.uiPort or ports.vexa.ui;
       model = settings.model or "Systran/faster-whisper-base";
       secret = key: "$" + "{${key}:?${key} is required}";
       botImage = "vexaai/vexa-bot@sha256:423c487aadb81514c71c9786758a3a730acbf5495e9593930da50c7442f158c1";
@@ -131,7 +132,7 @@
             GRADIO_ANALYTICS_ENABLED = "false";
           };
           volumes = [ "${dataDir}/models:/root/.cache/huggingface" ];
-          ports = [ "127.0.0.1:18083:8000" ];
+          ports = [ "127.0.0.1:${toString ports.vexa.whisper}:8000" ];
           healthcheck = healthy "/root/faster-whisper-server/.venv/bin/python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=3)'";
           mem_limit = "1536m";
           cpus = "1.5";
@@ -140,7 +141,7 @@
           image = "vexaai/v012-admin-api@sha256:4c702354384eafe3a933cd537a106b7c15067cfd368a5f6da1a6e675e7e03e04";
           environment = database // internal // { ADMIN_API_TOKEN = secret "ADMIN_TOKEN"; };
           depends_on = depends [ "postgres" ];
-          ports = [ "127.0.0.1:18057:8001" ];
+          ports = [ "127.0.0.1:${toString ports.vexa.adminApi}:8001" ];
           healthcheck = httpHealth 8001;
           mem_limit = "384m";
         };
@@ -265,6 +266,10 @@
         };
         virtualisation.docker.enable = true;
         virtualisation.docker.daemon.settings.log-driver = "journald";
+        # Docker (running as root) publishes these on loopback, so they are privileged and no
+        # login can take one. There is no systemd unit to confine; registering them anyway puts
+        # them under the same evaluation-time privilege assertion as every other Ryra port.
+        ryra.services.loopbackGuards = [ { ports = [ apiPort uiPort ports.vexa.whisper ports.vexa.adminApi ]; } ];
         ryra.services.state.${name} = { path = dataDir; owner = "root"; group = "root"; };
         environment.systemPackages = [ (pkgs.writeShellScriptBin "${name}-compose" ''
           exec ${compose} "$@"

@@ -34,7 +34,7 @@ let
   failures = c: map (a: a.message) (builtins.filter (a: !a.assertion) c.assertions);
   private = evaluate {};
   public = evaluate { web = { access = "public"; domain = "git.example.com"; }; };
-  custom = evaluate { web.port = 8184; settings = { port = 3101; adminUser = "owner"; }; };
+  custom = evaluate { web.port = 704; settings = { port = 703; adminUser = "owner"; }; };
   oidc = evaluate { shared = true; mode = "oidc"; };
   managed = evaluate { shared = true; managed = true; mode = "oidc"; };
   optOut = evaluate { shared = true; };
@@ -51,7 +51,7 @@ let
 in
 assert lib.assertMsg (builtins.all (c: failures c == []) [ private public custom oidc managed optOut external ]) "A Forgejo configuration failed NixOS assertions.";
 assert private.services.forgejo.settings.server.HTTP_ADDR == "127.0.0.1";
-assert private.services.forgejo.settings.server.ROOT_URL == "http://127.0.0.1:8085/";
+assert private.services.forgejo.settings.server.ROOT_URL == "http://127.0.0.1:804/";
 assert private.services.forgejo.settings.server.DISABLE_SSH;
 assert private.services.forgejo.settings.service.DISABLE_REGISTRATION;
 assert private.services.forgejo.settings.service.REQUIRE_SIGNIN_VIEW;
@@ -61,8 +61,8 @@ assert private.networking.firewall.allowedTCPPorts == [];
 assert public.services.forgejo.settings.server.ROOT_URL == "https://git.example.com/";
 assert public.services.forgejo.settings.session.COOKIE_SECURE;
 assert public.networking.firewall.allowedTCPPorts == [ 80 443 ];
-assert custom.services.nginx.virtualHosts."forgejo.localhost".locations."/".proxyPass == "http://127.0.0.1:3101";
-assert custom.services.forgejo.settings.server.ROOT_URL == "http://127.0.0.1:8184/";
+assert custom.services.nginx.virtualHosts."forgejo.localhost".locations."/".proxyPass == "http://127.0.0.1:703";
+assert custom.services.forgejo.settings.server.ROOT_URL == "http://127.0.0.1:704/";
 assert lib.hasInfix (lib.escapeShellArg "SELECT count(*) FROM user WHERE lower_name = lower('owner');") custom.systemd.services.forgejo.preStart;
 assert builtins.elem "admin:/run/forgejo-admin" private.systemd.services.forgejo.serviceConfig.LoadCredential;
 assert failures (evaluate { settings.adminPasswordFile = "/nix/store/unsafe-password"; }) != [];

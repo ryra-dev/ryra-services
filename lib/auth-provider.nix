@@ -1,6 +1,8 @@
 { config, lib, pkgs, options, ... }:
 let
   inherit (lib) mkOption types;
+  ports = import ./ports.nix;
+  guard = import ./loopback.nix { inherit lib; };
   cfg = config.ryra.services.auth.provider;
   runtimeFile = types.pathWith { absolute = true; inStore = false; };
   clients = config.ryra.services.auth.requests // cfg.extraClients;
@@ -39,12 +41,12 @@ in {
     credentialService = mkOption { type = types.nullOr types.str; default = null; };
     issuerUrl = mkOption { type = types.str; };
     cookieDomain = mkOption { type = types.str; };
-    port = mkOption { type = types.port; default = 9091; };
+    port = mkOption { type = types.port; default = ports.authelia.provider; };
     storagePath = mkOption { type = types.str; default = "/var/lib/authelia-${cfg.instance}/db.sqlite3"; };
     lldapStatePath = mkOption { type = types.str; default = "/var/lib/lldap"; };
     ldap = {
-      port = mkOption { type = types.port; default = 3890; };
-      httpPort = mkOption { type = types.port; default = 17170; };
+      port = mkOption { type = types.port; default = ports.lldap.ldap; };
+      httpPort = mkOption { type = types.port; default = ports.lldap.http; };
       baseDn = mkOption { type = types.str; };
       bindDn = mkOption { type = types.str; };
       adminUser = mkOption { type = types.str; default = "admin"; };
@@ -82,7 +84,10 @@ in {
       description = "Runtime credentials for automatically registered hosted applications.";
     };
   };
-  config = lib.mkIf cfg.enable (lib.mkMerge [{
+  config = lib.mkIf cfg.enable (lib.mkMerge [
+    (guard { unit = "authelia-${cfg.instance}"; ports = [ cfg.port ]; })
+    (guard { unit = "lldap"; ports = [ cfg.ldap.port cfg.ldap.httpPort ]; })
+    {
     assertions = [
       {
         assertion = builtins.match "https://[a-zA-Z0-9.-]+(:[0-9]{1,5})?" cfg.issuerUrl != null;

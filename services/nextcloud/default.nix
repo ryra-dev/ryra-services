@@ -8,7 +8,7 @@
     optionRoot = [ "ryra" "nextcloud" ];
     needs = [ "secrets" "backup" ];
     provides = [];
-    web.port = 8082;
+    web.port = (import ../../lib/ports.nix).nextcloud.frontDoor;
     web.authModes = [ "none" "oidc" ];
     secrets = {
       "nextcloud-adminpass" = {

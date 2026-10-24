@@ -8,7 +8,7 @@
     optionRoot = [ "ryra" "grafana" ];
     needs = [ "secrets" "backup" ];
     provides = [];
-    web.port = 8083;
+    web.port = (import ../../lib/ports.nix).grafana.frontDoor;
     web.authModes = [ "none" "oidc" ];
     secrets = {
       "grafana-adminpass" = {
@@ -34,6 +34,8 @@
   module = { name, contracts, settings }:
     { config, lib, pkgs, ... }:
     let
+      ports = import ../../lib/ports.nix;
+      guard = import ../../lib/loopback.nix { inherit lib; };
       cfg = config.services.grafana;
       dataDir = "/var/lib/${name}";
       database = "${dataDir}/data/grafana.db";
@@ -109,7 +111,7 @@
           }; };
         };
       };
-      config = {
+      config = lib.mkMerge [ (guard { unit = "grafana"; ports = [ cfg.settings.server.http_port ]; }) {
         assertions = [
           { assertion = !oidc || builtins.all (endpoint: endpoint != null)
               [ auth.result.authorizationEndpoint auth.result.tokenEndpoint auth.result.userinfoEndpoint ];
@@ -140,7 +142,7 @@
           inherit dataDir;
           openFirewall = false;
           settings = lib.recursiveUpdate {
-            server = { http_addr = "127.0.0.1"; http_port = settings.port or 3000; root_url = "${web.url}/"; };
+            server = { http_addr = "127.0.0.1"; http_port = settings.port or ports.grafana.backend; root_url = "${web.url}/"; };
             database = { type = "sqlite3"; path = database; };
             paths.data = "${dataDir}/data";
             security = {
@@ -187,6 +189,6 @@
           (lib.optional (auth.result.credentialService != null) auth.result.credentialService);
         systemd.services.grafana.after = lib.optionals oidc
           (lib.optional (auth.result.credentialService != null) auth.result.credentialService);
-      };
+      } ];
     };
 }
