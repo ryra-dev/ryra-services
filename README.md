@@ -49,12 +49,29 @@ authentication protocols through typed login and refresh requests. The
 `lib.withServices { inherit pkgs; package = ryra; index = myRegistry.index; }`
 packages one index for both `ryra catalog services` and `ryra integrations`.
 The equivalent without a wrapper is `RYRA_SERVICE_INDEX=/path/to/index.json`.
-The desktop Services page and `ryra catalog services --org ORG` read the same
-organization repository list. Add a repository from Services → Repositories, or
-save a complete list with `ryra catalog services --org ORG --save-sources --source
-acme=github:acme/services`. The default is `github:ryra-dev/ryra-services`.
-Fetched metadata is cached at its resolved revision; `--refresh` updates it.
-There is no separate connection catalog.
+The desktop Services page and `ryra catalog --org ORG` read the same organization
+repository list. Add repositories without replacing the existing ones:
+
+```sh
+ryra catalog --org ORG --add-source acme=github:acme/services
+ryra catalog --org ORG --add-source partner=git+https://forge.example/partner/services.git
+```
+
+All configured repositories are used together, alongside the default
+`github:ryra-dev/ryra-services`. Their namespaces keep identically named services
+and accounts separate. Fetched metadata is cached at its Git revision;
+`ryra catalog --org ORG --refresh` updates it. There is no separate connection catalog.
+
+Each repository publishes `service-index.json` at the root of its flake. Generate
+it from the Nix definitions with `nix eval --json .#index > service-index.json` and
+commit it with them. This repository uses `bash scripts/service-index.sh` to
+generate it and `bash scripts/service-index.sh --check` to check it. Consumers read
+the generated metadata without Nix, including on Windows. Local folders need no
+additional tool; remote Git repositories use Git and its configured credentials.
+GitHub references, Git URLs and their `ref`, `rev` and `dir` selections are supported.
+Never put user credentials in the published index. Nix still builds packages and
+deploys NixOS modules; connecting a metadata-only OAuth or token integration does
+not require either.
 
 Connections with environment bindings support Ryra's reviewed
 `--connection SERVICE=CONNECTION_ID` binding, private systemd credentials and

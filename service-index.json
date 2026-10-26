@@ -1,0 +1,1145 @@
+{
+  "authelia": {
+    "category": "productivity",
+    "deployable": true,
+    "description": "# Authelia\n\nOptional shared sign-in backed by a private LLDAP directory. Application accounts and custom OIDC providers work independently of this service.\n\nSetup collects your initial username, email and password in the organization's vault. Choose a stable HTTPS origin through the app's reviewed private access route or a public domain. Internal keys and app client credentials are generated on the machine and retained with the directory and sign-in databases under `/var/lib/ryra-auth`. Keep the service backup and its vault encryption password together: losing the signing or storage keys cannot be repaired by generating replacements.\n\nThe initial person belongs to `service_users`, `service_admins` and `lldap_admin`. The generated directory administrator and Authelia reader cannot sign in to ordinary apps. Setup preserves established human passwords on retry. Initial setup does not delete other people or groups.\n\nManage people and change passwords with the same human login in LLDAP's private UI. From Ryra, open `http://127.0.0.1:17170` through the machine's encrypted browser connection, for example `ryra browser http://127.0.0.1:17170 --remote HOST`. This address belongs to the service machine. The directory port stays on loopback and is never published. Add ordinary people to `service_users`; use `service_admins` only for app administration. Directory management additionally requires `lldap_admin`.\n\nBackups briefly stop both authentication services, snapshot both SQLite databases and preserve every generated key and client credential. Restores keep the writers stopped while restoring the complete set, then restart and require Authelia's health check to succeed. Filesystem notifications are retained locally by default; set `settings.notifier` explicitly before enabling email password reset.\n",
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "authelia"
+    ],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {
+      "authelia-admin": {
+        "purpose": "Initial shared sign-in account",
+        "restart": [
+          "ryra-auth-bootstrap.service"
+        ],
+        "setup": {
+          "fields": [
+            {
+              "label": "Username",
+              "name": "INITIAL_USERNAME",
+              "secret": false
+            },
+            {
+              "label": "Email",
+              "name": "INITIAL_EMAIL",
+              "secret": false
+            },
+            {
+              "label": "Password",
+              "name": "INITIAL_PASSWORD",
+              "secret": true
+            }
+          ],
+          "instructions": "Choose your shared sign-in account. This same account manages users through Ryra's private directory connection. Existing passwords are preserved when setup runs again."
+        }
+      },
+      "restic-authelia": {
+        "generate": {
+          "bytes": 32,
+          "format": "base64"
+        },
+        "purpose": "Encryption password for the shared sign-in backup repository",
+        "restart": [
+          "restic-backups-authelia.service"
+        ]
+      }
+    },
+    "summary": "Optional shared sign-in and user directory",
+    "title": "Authelia",
+    "url": "https://www.authelia.com",
+    "web": {
+      "port": 805
+    }
+  },
+  "claude": {
+    "auth": {
+      "claude": {
+        "carries": {
+          "at": ".claude/.credentials.json",
+          "what": "your own Claude sign-in"
+        },
+        "connect": {
+          "command": [
+            "claude",
+            "auth",
+            "login"
+          ],
+          "file": ".claude/.credentials.json",
+          "keychain": "Claude Code-credentials",
+          "kind": "local"
+        },
+        "label": "Claude",
+        "why": "Use your own Claude Code sign-in on the machines you reach."
+      }
+    },
+    "carries": [
+      "claude"
+    ],
+    "category": "tools",
+    "deployable": true,
+    "needs": [],
+    "optionRoot": [],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {},
+    "stateless": true,
+    "summary": "Claude Code, signed in as whoever is using it",
+    "title": "Claude",
+    "url": "https://claude.com/claude-code"
+  },
+  "cloudflare": {
+    "auth": {
+      "cloudflare": {
+        "connect": {
+          "fields": [
+            "account_id",
+            "api_token"
+          ],
+          "kind": "token",
+          "page": "https://dash.cloudflare.com/?to=/:account/api-tokens",
+          "scopes": "For web gateways, supply your Account ID and an API token with Account: Cloudflare Tunnel Edit for that account, plus Zone: DNS Edit, Zone Read, SSL and Certificates Read, and Zone Settings Read for only the intended zones. Gateways require active full zones with Universal SSL enabled and HTTPS enabled, using the zone apex or one subdomain label. Application authentication stays with the app or Authelia.\nFor other Cloudflare actions, grant only the permissions they need, such as Pages Edit or SSL and Certificates Edit.\n"
+        },
+        "driver": {
+          "command": [
+            "ryra-adapter-cloudflare"
+          ],
+          "configuration": {
+            "client_id": "",
+            "scopes": ""
+          },
+          "required": [
+            "client_id",
+            "scopes"
+          ]
+        },
+        "environment": {
+          "CLOUDFLARE_ACCOUNT_ID": "account_id",
+          "CLOUDFLARE_API_TOKEN": "api_token"
+        },
+        "label": "Cloudflare",
+        "organization_owned": true,
+        "settings": {
+          "/driver/configuration/client_id": {
+            "env": "RYRA_CLOUDFLARE_OAUTH_CLIENT_ID"
+          },
+          "/driver/configuration/scopes": {
+            "env": "RYRA_CLOUDFLARE_OAUTH_SCOPES"
+          }
+        },
+        "why": "Publish websites and connect applications through your organization's Cloudflare account."
+      }
+    },
+    "category": "network",
+    "deployable": true,
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "cloudflare"
+    ],
+    "package": "cloudflare",
+    "provides": [
+      "web-gateway"
+    ],
+    "secrets": {
+      "restic-cloudflare": {
+        "generate": {
+          "bytes": 32,
+          "format": "base64"
+        },
+        "purpose": "Encryption password for gateway ownership backups",
+        "restart": [
+          "restic-backups-cloudflare.service"
+        ]
+      }
+    },
+    "serviceConnections": {
+      "ryra-cloudflare-setup": "cloudflare"
+    },
+    "summary": "Publish sites and manage DNS, tunnels and HTTPS",
+    "title": "Cloudflare",
+    "url": "https://cloudflare.com"
+  },
+  "codex": {
+    "auth": {
+      "codex": {
+        "carries": {
+          "at": ".codex/auth.json",
+          "what": "your own Codex sign-in"
+        },
+        "connect": {
+          "command": [
+            "codex",
+            "login"
+          ],
+          "file": ".codex/auth.json",
+          "kind": "local"
+        },
+        "label": "Codex",
+        "why": "Use your own Codex sign-in on the machines you reach."
+      }
+    },
+    "carries": [
+      "codex"
+    ],
+    "category": "tools",
+    "deployable": true,
+    "needs": [],
+    "optionRoot": [],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {},
+    "stateless": true,
+    "summary": "OpenAI's agent, signed in as whoever is using it",
+    "title": "Codex",
+    "url": "https://developers.openai.com/codex/cli"
+  },
+  "forgejo": {
+    "category": "tools",
+    "deployable": true,
+    "description": "Forgejo hosts Git repositories, issues and pull requests. It uses SQLite and the Ryra web contract: private access by default, with optional public HTTPS or Tailscale access. Clone and push over HTTP(S); SSH and public registration are disabled.\n\nThe initial administrator is `ryra-admin`, with a generated password in `forgejo-adminpass`. Sign in and change that password, then create other accounts from Forgejo's administration page. `settings.adminUser` and `settings.adminEmail` select the initial account; Forgejo reserves the username `admin`. `settings.adminPasswordFile` can supply a runtime password file. Restarting or applying again preserves an existing account and its password.\n\nNative accounts are the default. Optionally set `auth.mode = \"oidc\"` to reuse the machine's Authelia and LLDAP sign-in, as with Nextcloud and Grafana. This registers the client and supplies its runtime credentials; it does not install a shared provider. Configure a stable HTTPS URL with `web.externalUrl` or public HTTPS first. An external OIDC provider can instead be supplied through `auth.external`. Shared users get ordinary Forgejo accounts on first sign-in; linking an existing account requires signing into it. The native administrator remains available. Git clients use Forgejo access tokens generated after signing in.\n\nReturning to `auth.mode = \"none\"` disables shared sign-in while preserving its accounts and links for re-enabling. Shared-only accounts cannot sign in while it is disabled. Keep the same issuer for existing accounts; replacing the identity provider requires migrating its account mappings.\n\nNative login remains available if Forgejo restarts while the issuer is offline. With Forgejo 15, the first shared sign-in after the issuer returns can fail while discovery refreshes; retry sign-in.\n\nThe private web port is 8085 and the loopback backend port is 3001. Set `web.port` or `settings.port` if needed. For Git from another machine, use a reachable HTTPS address or forward the private port through SSH. A Ryra browser connection only carries browser traffic.\n\nHourly encrypted backups briefly stop Forgejo and capture `/var/lib/forgejo`, including repositories, SQLite, attachments and generated encryption keys. The service restarts even if a backup fails. Use `sudo ryra-backup-forgejo backup`, `snapshots`, and `restore SNAPSHOT`. Restore to an empty state directory with the same Forgejo version first; restoring over existing files does not remove newer repositories. Keep the declaration and backup password with your recovery materials.\n",
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "forgejo"
+    ],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {
+      "forgejo-adminpass": {
+        "generate": {
+          "bytes": 32,
+          "format": "hex"
+        },
+        "owner": "forgejo",
+        "purpose": "Forgejo initial administrator password",
+        "restart": [
+          "forgejo.service"
+        ]
+      },
+      "restic-forgejo": {
+        "generate": {
+          "bytes": 32,
+          "format": "base64"
+        },
+        "purpose": "Encryption password for Forgejo's backup repository",
+        "restart": [
+          "restic-backups-forgejo.service"
+        ]
+      }
+    },
+    "summary": "Git repositories, issues and pull requests",
+    "title": "Forgejo",
+    "url": "https://forgejo.org",
+    "web": {
+      "authModes": [
+        "none",
+        "oidc"
+      ],
+      "port": 804
+    }
+  },
+  "gemini": {
+    "auth": {
+      "gemini-api": {
+        "connect": {
+          "fields": [
+            "api_key"
+          ],
+          "kind": "token",
+          "page": "https://aistudio.google.com/api-keys",
+          "scopes": "Create a Gemini API key in the project you want to use."
+        },
+        "environment": {
+          "GEMINI_API_KEY": "api_key",
+          "GOOGLE_API_KEY": "api_key"
+        },
+        "label": "Gemini API",
+        "organization_owned": true,
+        "why": "Use your project's Gemini API key in AI tools."
+      }
+    },
+    "carries": [],
+    "category": "tools",
+    "deployable": true,
+    "needs": [],
+    "optionRoot": [],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {},
+    "stateless": true,
+    "summary": "Google's agent, signed in as whoever is using it",
+    "title": "Gemini",
+    "url": "https://github.com/google-gemini/gemini-cli"
+  },
+  "gh": {
+    "auth": {
+      "github": {
+        "carries": {
+          "at": ".config/gh/hosts.yml",
+          "what": "your own GitHub sign-in"
+        },
+        "connect": {
+          "fields": [
+            "token"
+          ],
+          "kind": "token",
+          "page": "https://github.com/settings/personal-access-tokens/new?name=Ryra&description=Repository%20access%20and%20machine%20deploy%20keys&expires_in=90&contents=write&administration=write",
+          "scopes": "Browser sign-in requests repository read/write access. Use a fine-grained personal access token to select specific repositories. Contents write allows pushing; Administration write allows creating deploy keys."
+        },
+        "driver": {
+          "command": [
+            "ryra-adapter-gh"
+          ],
+          "configuration": {
+            "client_id": "",
+            "client_secret": ""
+          },
+          "required": [
+            "client_id",
+            "client_secret"
+          ]
+        },
+        "environment": {
+          "GH_TOKEN": "token"
+        },
+        "label": "GitHub",
+        "settings": {
+          "/driver/configuration/client_id": {
+            "env": "RYRA_GITHUB_CLIENT_ID"
+          },
+          "/driver/configuration/client_secret": {
+            "env": "RYRA_GITHUB_CLIENT_SECRET"
+          }
+        },
+        "why": "Read and push repositories as yourself, and create deploy keys for your machines."
+      }
+    },
+    "carries": [
+      "github"
+    ],
+    "category": "tools",
+    "deployable": true,
+    "needs": [],
+    "optionRoot": [],
+    "package": "gh",
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {},
+    "stateless": true,
+    "summary": "The GitHub CLI, signed in as whoever is using it",
+    "title": "GitHub",
+    "url": "https://cli.github.com"
+  },
+  "google": {
+    "adapters": {
+      "google-directory": {
+        "command": [
+          "ryra-adapter-google"
+        ],
+        "connection": "google-directory",
+        "directory": true,
+        "label": "Google Workspace directory"
+      },
+      "google-files": {
+        "command": [
+          "ryra-adapter-google"
+        ],
+        "connection": "google",
+        "files": {
+          "hint": "Browse Drive with this account's granted access. Google Docs, Sheets and Slides are exported as Word, Excel and PowerPoint files.",
+          "permission": {
+            "choices": [
+              "selected-files",
+              "read",
+              "write"
+            ],
+            "id": "drive"
+          },
+          "start": "root"
+        },
+        "label": "Google Drive"
+      }
+    },
+    "auth": {
+      "google": {
+        "connect": {
+          "kind": "oauth2",
+          "profile": {
+            "authorize": "https://accounts.google.com/o/oauth2/v2/auth",
+            "client_id": "",
+            "client_secret": null,
+            "identity": {
+              "label": [
+                "/email"
+              ],
+              "require": {
+                "/email_verified": true
+              },
+              "subject": "/sub",
+              "url": "https://openidconnect.googleapis.com/v1/userinfo"
+            },
+            "parameters": {
+              "access_type": "offline",
+              "include_granted_scopes": "false",
+              "prompt": "consent select_account"
+            },
+            "permissions": [
+              {
+                "choices": [
+                  {
+                    "id": "off",
+                    "label": "No access",
+                    "scopes": []
+                  },
+                  {
+                    "id": "selected-files",
+                    "label": "Selected files",
+                    "parameters": {
+                      "allow_multiple": "true",
+                      "trigger_onepick": "true"
+                    },
+                    "scopes": [
+                      "https://www.googleapis.com/auth/drive.file"
+                    ]
+                  },
+                  {
+                    "id": "read",
+                    "label": "Read files",
+                    "scopes": [
+                      "https://www.googleapis.com/auth/drive.readonly"
+                    ]
+                  },
+                  {
+                    "id": "write",
+                    "label": "Read and change files",
+                    "scopes": [
+                      "https://www.googleapis.com/auth/drive"
+                    ]
+                  }
+                ],
+                "default": "selected-files",
+                "id": "drive",
+                "label": "Google Drive"
+              },
+              {
+                "choices": [
+                  {
+                    "id": "off",
+                    "label": "No access",
+                    "scopes": []
+                  },
+                  {
+                    "id": "read",
+                    "label": "Read mail",
+                    "scopes": [
+                      "https://www.googleapis.com/auth/gmail.readonly"
+                    ]
+                  },
+                  {
+                    "id": "write",
+                    "label": "Read, manage and send mail",
+                    "scopes": [
+                      "https://www.googleapis.com/auth/gmail.modify"
+                    ]
+                  }
+                ],
+                "default": "read",
+                "id": "gmail",
+                "label": "Gmail"
+              },
+              {
+                "choices": [
+                  {
+                    "id": "off",
+                    "label": "No access",
+                    "scopes": []
+                  },
+                  {
+                    "id": "read",
+                    "label": "Read events",
+                    "scopes": [
+                      "https://www.googleapis.com/auth/calendar.events.readonly"
+                    ]
+                  },
+                  {
+                    "id": "write",
+                    "label": "Read and change events",
+                    "scopes": [
+                      "https://www.googleapis.com/auth/calendar.events"
+                    ]
+                  }
+                ],
+                "default": "off",
+                "id": "calendar",
+                "label": "Google Calendar"
+              }
+            ],
+            "scope_aliases": {
+              "https://www.googleapis.com/auth/userinfo.email": "email"
+            },
+            "scopes": [
+              "openid",
+              "email"
+            ],
+            "token": "https://oauth2.googleapis.com/token"
+          }
+        },
+        "environment": {
+          "GOOGLE_ACCESS_TOKEN": "access_token",
+          "GOOGLE_ACCOUNT_EMAIL": "account"
+        },
+        "label": "Google Workspace",
+        "settings": {
+          "/connect/profile/client_id": {
+            "env": "RYRA_GOOGLE_CLIENT_ID",
+            "file": {
+              "config": "ryra/publisher/google-desktop.json",
+              "env": "RYRA_GOOGLE_CLIENT_FILE",
+              "pointer": "/installed/client_id"
+            }
+          },
+          "/connect/profile/client_secret": {
+            "env": "RYRA_GOOGLE_CLIENT_SECRET",
+            "file": {
+              "config": "ryra/publisher/google-desktop.json",
+              "env": "RYRA_GOOGLE_CLIENT_FILE",
+              "pointer": "/installed/client_secret"
+            }
+          }
+        },
+        "why": "Connect your Gmail, Calendar and Drive with the access you choose."
+      },
+      "google-directory": {
+        "connect": {
+          "kind": "oauth2",
+          "profile": {
+            "authorize": "https://accounts.google.com/o/oauth2/v2/auth",
+            "client_id": "",
+            "client_secret": null,
+            "identity": {
+              "label": [
+                "/email"
+              ],
+              "require": {
+                "/email_verified": true
+              },
+              "subject": "/sub",
+              "url": "https://openidconnect.googleapis.com/v1/userinfo"
+            },
+            "parameters": {
+              "access_type": "online",
+              "include_granted_scopes": "false",
+              "prompt": "consent select_account"
+            },
+            "persistent": false,
+            "scope_aliases": {
+              "https://www.googleapis.com/auth/userinfo.email": "email"
+            },
+            "scopes": [
+              "openid",
+              "email",
+              "https://www.googleapis.com/auth/admin.directory.user.readonly"
+            ],
+            "token": "https://oauth2.googleapis.com/token"
+          }
+        },
+        "environment": {
+          "GOOGLE_ACCESS_TOKEN": "access_token",
+          "GOOGLE_ACCOUNT_EMAIL": "account"
+        },
+        "label": "Google Workspace directory",
+        "settings": {
+          "/connect/profile/client_id": {
+            "env": "RYRA_GOOGLE_CLIENT_ID",
+            "file": {
+              "config": "ryra/publisher/google-desktop.json",
+              "env": "RYRA_GOOGLE_CLIENT_FILE",
+              "pointer": "/installed/client_id"
+            }
+          },
+          "/connect/profile/client_secret": {
+            "env": "RYRA_GOOGLE_CLIENT_SECRET",
+            "file": {
+              "config": "ryra/publisher/google-desktop.json",
+              "env": "RYRA_GOOGLE_CLIENT_FILE",
+              "pointer": "/installed/client_secret"
+            }
+          }
+        },
+        "why": "Review people before inviting them to an organization"
+      }
+    },
+    "category": "productivity",
+    "deployable": false,
+    "package": "google",
+    "summary": "Gmail, Calendar, Drive and a company directory",
+    "title": "Google Workspace",
+    "url": "https://workspace.google.com"
+  },
+  "grafana": {
+    "category": "productivity",
+    "deployable": true,
+    "description": "Grafana runs behind the Ryra web contract with a loopback backend and hourly encrypted backups by default.\n\nSet `auth.mode = \"none\"` for native login, even when the shared Authelia/LLDAP provider is enabled. The initial administrator is `admin`; its generated password lives in `grafana-adminpass`. For custom authentication, select `none` and supply Grafana settings through `settings.extraSettings`, using runtime file providers for secrets. Anonymous access remains disabled.\n\nShared OIDC uses PKCE and the canonical web origin. Private OIDC needs `web.externalUrl`, a stable HTTPS origin. New users receive Viewer. Set `settings.allowedGroups` to restrict admission, `settings.roleAttributePath` to an explicit JMESPath role policy, and `settings.allowAssignGrafanaAdmin = true` only when that policy deliberately grants server administration. For example, `contains(groups, 'grafana-editors') && 'Editor' || 'Viewer'` grants editor access to that group.\n\nBackups stop Grafana, create and validate a SQLite snapshot, capture the data and plugins, then restart Grafana, including after backup failure. Restore stops Grafana, restores the files, validates the snapshot, replaces the database and checks application health. A failed restore requires correcting the failure before resuming work. Retain the original `grafana-secret-key` and declaration with the backup: encrypted datasource credentials need that key. Restore using the matching Grafana version first.\n\nUse `sudo ryra-backup-grafana backup`, `snapshots`, and `restore SNAPSHOT`. A restore replaces saved content and should be rehearsed on an isolated machine. Validate a saved dashboard, datasource and login after restore before relying on the backup.\n\nRun `nix eval --json --impure --file services/grafana/check.nix` for the auth and contract evaluation. On a disposable native-auth fixture with curl, jq and socat, run `RYRA_GRAFANA_RESTORE_FIXTURE=1 bash services/grafana/restore-smoke.sh APP_URL ADMIN_JSON` as root. The JSON file contains `username` and `password`. This creates saved content, backs up, mutates it, restores the actual repository snapshot and verifies native login, dashboard, decrypted datasource credentials and plugin data. Its local backend on port 19090 accepts only the saved secret header. Shared OIDC uses the Grafana branch of `scripts/auth-smoke.sh` with a Viewer fixture account.\n",
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "grafana"
+    ],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {
+      "grafana-adminpass": {
+        "generate": {
+          "bytes": 32,
+          "format": "hex"
+        },
+        "owner": "grafana",
+        "purpose": "Grafana initial administrator password",
+        "restart": [
+          "grafana.service"
+        ]
+      },
+      "grafana-secret-key": {
+        "generate": {
+          "bytes": 32,
+          "format": "hex"
+        },
+        "owner": "grafana",
+        "purpose": "Grafana database encryption key, retain with backups",
+        "restart": [
+          "grafana.service"
+        ]
+      },
+      "restic-grafana": {
+        "generate": {
+          "bytes": 32,
+          "format": "base64"
+        },
+        "purpose": "Encryption password for Grafana's backup repository",
+        "restart": [
+          "restic-backups-grafana.service"
+        ]
+      }
+    },
+    "summary": "Dashboards and observability",
+    "title": "Grafana",
+    "url": "https://grafana.com",
+    "web": {
+      "authModes": [
+        "none",
+        "oidc"
+      ],
+      "port": 801
+    }
+  },
+  "linkding": {
+    "category": "productivity",
+    "deployable": true,
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "linkding"
+    ],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {
+      "linkding-admin": {
+        "owner": "linkding",
+        "purpose": "Linkding administrator account",
+        "restart": [
+          "linkding.service"
+        ],
+        "setup": {
+          "fields": [
+            {
+              "label": "Username",
+              "name": "LD_SUPERUSER_NAME",
+              "secret": false
+            },
+            {
+              "label": "Password",
+              "name": "LD_SUPERUSER_PASSWORD",
+              "secret": true
+            }
+          ],
+          "instructions": "Choose the administrator login for this service. Ryra stores the credentials securely and prepares the required file."
+        }
+      },
+      "restic-linkding": {
+        "generate": {
+          "bytes": 32,
+          "format": "base64"
+        },
+        "owner": "root",
+        "purpose": "Encryption password for Linkding's backup repository",
+        "restart": [
+          "restic-backups-linkding.service"
+        ]
+      }
+    },
+    "summary": "Bookmark manager",
+    "title": "Linkding",
+    "url": "https://linkding.link",
+    "web": {
+      "authModes": [
+        "none",
+        "oidc"
+      ],
+      "port": 802
+    }
+  },
+  "microsoft": {
+    "adapters": {
+      "microsoft-directory": {
+        "command": [
+          "ryra-adapter-microsoft"
+        ],
+        "connection": "microsoft-directory",
+        "directory": true,
+        "label": "Microsoft 365 directory"
+      },
+      "microsoft-files": {
+        "command": [
+          "ryra-adapter-microsoft"
+        ],
+        "connection": "microsoft-files",
+        "files": {
+          "hint": "Choose a SharePoint site your administrator has granted to Ryra.",
+          "start": "site"
+        },
+        "label": "SharePoint files"
+      }
+    },
+    "auth": {
+      "microsoft-directory": {
+        "connect": {
+          "kind": "oauth2",
+          "profile": {
+            "authorize": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+            "callback": "localhost",
+            "client_id": "4556edd8-d2e6-476e-83c2-fcc270fdc79a",
+            "identity": {
+              "label": [
+                "/mail",
+                "/userPrincipalName"
+              ],
+              "subject": "/id",
+              "url": "https://graph.microsoft.com/v1.0/me?$select=id,mail,userPrincipalName"
+            },
+            "implicit_scopes": [
+              "openid",
+              "profile",
+              "email"
+            ],
+            "parameters": {
+              "prompt": "select_account"
+            },
+            "persistent": false,
+            "scope_aliases": {
+              "https://graph.microsoft.com/Mail.Read": "Mail.Read",
+              "https://graph.microsoft.com/Mail.ReadWrite": "Mail.ReadWrite",
+              "https://graph.microsoft.com/Mail.Send": "Mail.Send",
+              "https://graph.microsoft.com/User.Read": "User.Read",
+              "https://graph.microsoft.com/User.ReadBasic.All": "User.ReadBasic.All"
+            },
+            "scopes": [
+              "https://graph.microsoft.com/User.Read",
+              "https://graph.microsoft.com/User.ReadBasic.All"
+            ],
+            "token": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+          }
+        },
+        "environment": {
+          "MICROSOFT_ACCESS_TOKEN": "access_token",
+          "MICROSOFT_ACCOUNT_EMAIL": "account"
+        },
+        "label": "Microsoft 365 directory",
+        "settings": {
+          "/connect/profile/client_id": {
+            "env": "RYRA_MICROSOFT_DIRECTORY_CLIENT_ID"
+          }
+        },
+        "why": "Review people before inviting them to an organization"
+      },
+      "microsoft-files": {
+        "connect": {
+          "kind": "oauth2",
+          "profile": {
+            "authorize": "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize",
+            "callback": "localhost",
+            "client_id": "74011f3c-52b7-44fa-8fbe-81bae9b5e93a",
+            "identity": {
+              "label": [
+                "/email",
+                "/name"
+              ],
+              "subject": "/sub",
+              "url": "https://graph.microsoft.com/oidc/userinfo"
+            },
+            "implicit_scopes": [
+              "openid",
+              "profile",
+              "email"
+            ],
+            "omitted_scopes": [
+              "offline_access"
+            ],
+            "parameters": {
+              "prompt": "select_account"
+            },
+            "scope_aliases": {
+              "https://graph.microsoft.com/Sites.Selected": "Sites.Selected"
+            },
+            "scopes": [
+              "openid",
+              "profile",
+              "email",
+              "offline_access",
+              "https://graph.microsoft.com/Sites.Selected"
+            ],
+            "token": "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+          }
+        },
+        "environment": {
+          "MICROSOFT_ACCESS_TOKEN": "access_token",
+          "MICROSOFT_ACCOUNT_EMAIL": "account"
+        },
+        "label": "SharePoint files",
+        "settings": {
+          "/connect/profile/client_id": {
+            "env": "RYRA_MICROSOFT_FILES_CLIENT_ID"
+          }
+        },
+        "why": "Use SharePoint sites explicitly granted to this application."
+      },
+      "microsoft-mail": {
+        "connect": {
+          "kind": "oauth2",
+          "profile": {
+            "authorize": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+            "callback": "localhost",
+            "client_id": "5047e9a2-ee6c-49b5-8d97-9a5f1601aaba",
+            "identity": {
+              "label": [
+                "/mail",
+                "/userPrincipalName"
+              ],
+              "subject": "/id",
+              "url": "https://graph.microsoft.com/v1.0/me?$select=id,mail,userPrincipalName"
+            },
+            "implicit_scopes": [
+              "openid",
+              "profile",
+              "email",
+              "Mail.Read"
+            ],
+            "omitted_scopes": [
+              "offline_access"
+            ],
+            "parameters": {
+              "prompt": "select_account"
+            },
+            "permissions": [
+              {
+                "choices": [
+                  {
+                    "id": "read",
+                    "label": "Read mail",
+                    "scopes": [
+                      "https://graph.microsoft.com/Mail.Read"
+                    ]
+                  },
+                  {
+                    "id": "write",
+                    "label": "Read, manage and send mail",
+                    "scopes": [
+                      "https://graph.microsoft.com/Mail.ReadWrite",
+                      "https://graph.microsoft.com/Mail.Send"
+                    ]
+                  }
+                ],
+                "default": "read",
+                "id": "mail",
+                "label": "Outlook mail"
+              }
+            ],
+            "scope_aliases": {
+              "https://graph.microsoft.com/Mail.Read": "Mail.Read",
+              "https://graph.microsoft.com/Mail.ReadWrite": "Mail.ReadWrite",
+              "https://graph.microsoft.com/Mail.Send": "Mail.Send",
+              "https://graph.microsoft.com/User.Read": "User.Read"
+            },
+            "scopes": [
+              "offline_access",
+              "https://graph.microsoft.com/User.Read"
+            ],
+            "token": "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+          }
+        },
+        "environment": {
+          "MICROSOFT_ACCESS_TOKEN": "access_token",
+          "MICROSOFT_ACCOUNT_EMAIL": "account"
+        },
+        "label": "Outlook mail",
+        "settings": {
+          "/connect/profile/client_id": {
+            "env": "RYRA_MICROSOFT_MAIL_CLIENT_ID"
+          }
+        },
+        "why": "Connect your Microsoft mailbox with read access or explicit permission to manage and send mail."
+      }
+    },
+    "category": "productivity",
+    "deployable": false,
+    "package": "microsoft",
+    "summary": "Outlook, SharePoint and a company directory",
+    "title": "Microsoft 365",
+    "url": "https://www.microsoft.com/microsoft-365"
+  },
+  "nextcloud": {
+    "category": "productivity",
+    "deployable": true,
+    "description": "# Nextcloud\n\nShared files, calendars and contacts hosted on your organization's machines.\n\nRyra configures the database, backups and private access when you install it. Choose a public domain to enable automatic HTTPS. Each machine gets a separate installation with its own Nextcloud accounts. See [operational notes](SKILL.md).\n\nSet `auth.mode = \"oidc\"` for shared login and `auth.mode = \"none\"` for Nextcloud's own accounts. Enabling a provider alone does not select OIDC for an app. A custom OIDC provider uses `auth.external`, with its issuer, client ID and runtime client-secret file. Private OIDC requires `web.externalUrl`, a stable HTTPS origin supplied by the machine's access route. Nextcloud inherits the NixOS package default, installs its matching `user_oidc` package and reconciles the Ryra provider after setup. Local accounts remain available alongside OIDC; DAV and mobile clients use Nextcloud's own app passwords.\n\nThe provider module is exported as `nixosModules.auth-authelia-lldap`. It accepts runtime secret paths, issuer and directory settings, instance and storage paths, and `extraClients` for applications such as Grafana. Directory bootstrap, access rules, notifier and HTTPS routes belong to the machine configuration. Reuse `lib.checkAuth { config = evaluated.config; lib = nixpkgs.lib; }` before deployment. `bash scripts/auth-smoke.sh ISSUER APP_URL nextcloud CREDENTIALS_JSON EXPECTED_USER` verifies an actual login; use `linkding` to verify that application's authenticated session. The protected runtime JSON file contains `username` and `password`. Run this with a one-factor test identity whose consent is already granted or explicitly implicit. The script deletes its temporary cookies and credential copies. `auth-runtime-check.sh` checks Linkding's evaluated credential script for interrupted-write recovery and empty-secret refusal.\n\n`lib.authLiveTest { issuerUrl = ...; nextcloudUrl = ...; linkdingUrl = ...; cookieDomain = ...; }` supplies both applications and a provider for a disposable guest. It accepts `credentialDirectory` (default `/run/ryra-auth-test`), optional `credentialsReadyUnit` and `directoryBootstrapUnit`. The guest supplies runtime credentials, directory users and HTTPS routes; the fixture uses a filesystem notifier. For a fresh guest, use `system.stateVersion = \"26.05\"` so the native package default selects Nextcloud33 on the tested pins.\n\nThe live smoke uses its test user's native login-v2 app password for WebDAV, CalDAV and CardDAV, writes and deletes a unique file, then revokes that password. The Linkding branch creates a native API token and bookmark canary and removes both. Credential material stays in protected scratch files. Linkding's preferences API does not expose identity; verify its account id and email in the service database across repeated login and restarts.\n",
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "nextcloud"
+    ],
+    "provides": [],
+    "secretAliases": {},
+    "secrets": {
+      "nextcloud-adminpass": {
+        "generate": {
+          "bytes": 32,
+          "format": "hex"
+        },
+        "purpose": "Nextcloud admin account password"
+      },
+      "restic-nextcloud": {
+        "generate": {
+          "bytes": 32,
+          "format": "base64"
+        },
+        "owner": "nextcloud",
+        "purpose": "Encryption password for Nextcloud's backup repository",
+        "restart": [
+          "restic-backups-nextcloud.service"
+        ]
+      }
+    },
+    "summary": "Files, calendar and contacts",
+    "title": "Nextcloud",
+    "url": "https://nextcloud.com",
+    "web": {
+      "authModes": [
+        "none",
+        "oidc"
+      ],
+      "port": 803
+    }
+  },
+  "openai": {
+    "auth": {
+      "openai": {
+        "connect": {
+          "fields": [
+            "api_key"
+          ],
+          "kind": "token",
+          "page": "https://platform.openai.com/api-keys",
+          "scopes": "Create a key in the project you want voice charged to, with Realtime API access."
+        },
+        "environment": {
+          "OPENAI_API_KEY": "api_key"
+        },
+        "label": "OpenAI",
+        "organization_owned": true,
+        "why": "Charge conversation voice to your organization's OpenAI project."
+      }
+    },
+    "category": "tools",
+    "deployable": false,
+    "summary": "Use your organization's OpenAI API account",
+    "title": "OpenAI",
+    "url": "https://platform.openai.com"
+  },
+  "resend": {
+    "auth": {
+      "resend": {
+        "connect": {
+          "fields": [
+            "api_key"
+          ],
+          "kind": "token",
+          "page": "https://resend.com/api-keys",
+          "scopes": "For sending only, use a Sending API key restricted to its domain. Full access is needed for management and reporting."
+        },
+        "driver": {
+          "command": [
+            "ryra-adapter-resend"
+          ]
+        },
+        "environment": {
+          "RESEND_API_KEY": "api_key"
+        },
+        "label": "Resend",
+        "organization_owned": true,
+        "why": "Browser sign-in requests full account access for email and domain management. Connecting does not send email."
+      }
+    },
+    "category": "email",
+    "deployable": false,
+    "package": "resend",
+    "summary": "Connect your organization's email and domain management",
+    "title": "Resend",
+    "url": "https://resend.com"
+  },
+  "tailscale": {
+    "auth": {
+      "tailscale": {
+        "connect": {
+          "fields": [
+            "client_id",
+            "client_secret"
+          ],
+          "kind": "token",
+          "page": "https://console.tailscale.com/admin/settings/trust-credentials",
+          "scopes": "1. In Tailscale, create the device tag your machines will use. Ryra defaults to tag:ryra.\n2. Generate an OAuth client with Auth Keys: Write (auth_keys), authorized for that tag.\n3. For automatic app addresses, also grant Services, Policy File and Networking Settings: Write, and Devices Core: Read.\n4. Save the client ID and client secret below. Machines enroll without a separate sign-in.\n"
+        },
+        "label": "Tailscale",
+        "organization_owned": true,
+        "why": "Ryra uses this credential to enroll machines and apply reviewed private service addresses and access rules. The management credential stays in your organization's vault."
+      }
+    },
+    "category": "network",
+    "deployable": false,
+    "summary": "Connect machines to your private network",
+    "title": "Tailscale",
+    "url": "https://tailscale.com"
+  },
+  "vexa": {
+    "category": "productivity",
+    "deployable": true,
+    "description": "Vexa sends meeting bots into video calls, transcribes them with a local Whisper model and keeps the audio recordings. It runs as a Docker Compose stack of nine long-running containers and a one-shot bucket initialiser (PostgreSQL, Valkey, an S3-compatible recording store, Whisper, the API services and the web UI), started by `vexa.service`. Nothing is sent to a hosted transcription service. Images are pinned by digest and pulled when the service starts.\n\nPlan for about 4 GB of memory and a few GB of disk for the Whisper model and recordings. `settings.model` selects the Whisper model (default `Systran/faster-whisper-base`).\n\nThe web UI uses the Ryra web contract: private by default on port 8086, with optional public HTTPS or Tailscale access. Vexa's own login is the only one, so set `web.externalUrl` or public HTTPS before exposing it. The REST API listens on loopback port 18056 (`settings.apiPort`); the UI backend on 13000 (`settings.uiPort`). Neither is public.\n\nThe `vexa-environment` secret holds the internal credentials as an environment file: `DB_PASSWORD`, `ADMIN_TOKEN`, `INTERNAL_API_SECRET`, `NEXTAUTH_SECRET`, `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY`. Use independent random values. `ADMIN_TOKEN` is the key for Vexa's admin API; create users and their API tokens with it. `settings.environmentFile` supplies a runtime file instead of the declared secret.\n\nBots need Docker, so the module enables it and gives the runtime container the Docker socket. Anyone able to start a meeting bot can therefore start containers on this machine; treat the admin token accordingly.\n\nHourly encrypted backups capture a PostgreSQL dump and the recording store; Whisper models are a re-downloadable cache. Use `sudo ryra-backup-vexa backup`, `snapshots` and `restore SNAPSHOT`. Restore starts the stack, loads the dump over the fresh schema and restarts. `vexa-compose` runs `docker compose` against the stack, for example `sudo vexa-compose ps`.\n\nSyncing a Google Calendar into Vexa is not part of this service.\n",
+    "needs": [
+      "secrets",
+      "backup"
+    ],
+    "optionRoot": [
+      "ryra",
+      "vexa"
+    ],
+    "provides": [
+      "meeting-transcription"
+    ],
+    "secretAliases": {},
+    "secrets": {
+      "restic-vexa": {
+        "generate": {
+          "bytes": 32,
+          "format": "hex"
+        },
+        "owner": "root",
+        "purpose": "Vexa backup encryption password",
+        "restart": [
+          "restic-backups-vexa.service"
+        ]
+      },
+      "vexa-environment": {
+        "purpose": "Vexa database, internal API, session and recording-storage credentials",
+        "restart": [
+          "vexa.service"
+        ],
+        "setup": {
+          "fields": [
+            {
+              "label": "DB_PASSWORD",
+              "name": "DB_PASSWORD",
+              "secret": true
+            },
+            {
+              "label": "ADMIN_TOKEN",
+              "name": "ADMIN_TOKEN",
+              "secret": true
+            },
+            {
+              "label": "INTERNAL_API_SECRET",
+              "name": "INTERNAL_API_SECRET",
+              "secret": true
+            },
+            {
+              "label": "NEXTAUTH_SECRET",
+              "name": "NEXTAUTH_SECRET",
+              "secret": true
+            },
+            {
+              "label": "MINIO_ACCESS_KEY",
+              "name": "MINIO_ACCESS_KEY",
+              "secret": true
+            },
+            {
+              "label": "MINIO_SECRET_KEY",
+              "name": "MINIO_SECRET_KEY",
+              "secret": true
+            }
+          ],
+          "instructions": "Use independent random values for these internal service credentials."
+        }
+      }
+    },
+    "summary": "Meeting bots, local Whisper transcription and audio recordings",
+    "title": "Vexa",
+    "url": "https://github.com/Vexa-ai/vexa",
+    "web": {
+      "port": 806
+    }
+  },
+  "x": {
+    "auth": {
+      "x": {
+        "connect": {
+          "fields": [
+            "bearer_token"
+          ],
+          "kind": "token",
+          "page": "https://console.x.com",
+          "scopes": "Use the app-only Bearer Token from your developer app's Keys and tokens. Public read access; X API usage is billed to that app. Add API credits and set a spending limit in the developer console."
+        },
+        "environment": {
+          "X_BEARER_TOKEN": "bearer_token"
+        },
+        "label": "X",
+        "organization_owned": true,
+        "why": "Search and read public posts using your X developer app."
+      }
+    },
+    "category": "tools",
+    "deployable": false,
+    "description": "# X\n\nSearch and read public posts with an app-only bearer token from the\n[X developer console](https://console.x.com). Create a developer app, copy its\nBearer Token from Keys and tokens, and configure API credits and a spending\nlimit. [API reads are billed](https://docs.x.com/x-api/getting-started/pricing).\nPersonal timelines, bookmarks and posting require a separate user OAuth flow.\n\nReplace `ORG` with the intended organization. Check for a saved connection with\n`ryra integrations ls x --org ORG`. Supply the credential through Ryra's private\ncredential form, or pipe a JSON object with the single `bearer_token` field from\na secret manager into:\n\n```sh\nryra integrations connect x --org ORG --from-stdin\n```\n\nNew connections are private; use `--vault VAULT` to explicitly share one.\nSaving a token does not verify API access. Run a small search before reporting\nit connected:\n\n```sh\nryra integrations run x --org ORG -- sh -c \\\n  'printf \"Authorization: Bearer %s\\n\" \"$X_BEARER_TOKEN\" | \\\n    curl --fail-with-body --silent --show-error -H @- \\\n    --get --data-urlencode \"query=from:XDevelopers -is:retweet\" \\\n    --data-urlencode \"sort_order=recency\" --data-urlencode \"max_results=10\" \\\n    --data-urlencode \"tweet.fields=created_at,author_id,conversation_id,public_metrics\" \\\n    https://api.x.com/2/tweets/search/recent'\n```\n\n`X_BEARER_TOKEN` is a child-process environment variable. The HTTP header is\n`Authorization: Bearer ...`. Keep the shell's single quotes so the token expands\ninside the child. The shell builtin `printf` passes the header through stdin,\nkeeping the token out of curl's process arguments. Keep credentials out of logs\nand shell tracing.\n\n[Recent search](https://docs.x.com/x-api/posts/search/quickstart/recent-search)\ncovers seven days. Replace the query with keywords, hashtags or `from:HANDLE`.\nFor another page, pass the returned `meta.next_token` as `next_token` with the\nsame query; for later checks, use `since_id` to request only newer posts.\nReturned posts consume API credits. An empty successful result is valid.\nInspect response errors, including partial errors in a 200 response, before\nretrying. Check credentials, credits, endpoint permissions and rate limits.\n\nRead a returned post by replacing `POST_ID`:\n\n```sh\nryra integrations run x --org ORG -- sh -c \\\n  'printf \"Authorization: Bearer %s\\n\" \"$X_BEARER_TOKEN\" | \\\n    curl --fail-with-body --silent --show-error -H @- \\\n    \"https://api.x.com/2/tweets/POST_ID?tweet.fields=created_at,author_id,conversation_id,public_metrics\"'\n```\n\nX also provides an [official MCP endpoint](https://docs.x.com/tools/mcp) at\n`https://api.x.com/mcp` accepting the same app-only bearer header for public read\ntools. This service supplies credentials; configure an agent's MCP client\nseparately if needed.\n",
+    "summary": "Search and read public posts on X (Twitter)",
+    "title": "X",
+    "url": "https://x.com"
+  }
+}
