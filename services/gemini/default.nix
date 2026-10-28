@@ -14,6 +14,11 @@
         scopes = "Create a Gemini API key in the project you want to use.";
         fields = [ "api_key" ];
       };
+      verify = {
+        url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1";
+        headers.x-goog-api-key = "{api_key}";
+        present = [ "/models" ];
+      };
       environment = { GEMINI_API_KEY = "api_key"; GOOGLE_API_KEY = "api_key"; };
     };
     summary = "Google's agent, signed in as whoever is using it";

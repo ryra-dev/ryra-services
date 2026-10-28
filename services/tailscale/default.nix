@@ -19,6 +19,16 @@
         '';
         fields = [ "client_id" "client_secret" ];
       };
+      verify = {
+        url = "https://api.tailscale.com/api/v2/oauth/token";
+        form = {
+          client_id = "{client_id}";
+          client_secret = "{client_secret}";
+          grant_type = "client_credentials";
+          scope = "auth_keys";
+        };
+        present = [ "/access_token" ];
+      };
     };
   };
 }

@@ -31,6 +31,11 @@
         scopes = "Browser sign-in requests repository read/write access. Use a fine-grained personal access token to select specific repositories. Contents write allows pushing; Administration write allows creating deploy keys.";
         fields = [ "token" ];
       };
+      verify = {
+        url = "https://api.github.com/user";
+        headers.Authorization = "Bearer {token}";
+        present = [ "/id" "/login" ];
+      };
       driver = {
         command = [ "ryra-adapter-gh" ];
         configuration = { client_id = ""; client_secret = ""; };
