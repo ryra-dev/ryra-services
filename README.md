@@ -80,7 +80,15 @@ runs `ryra integrations run ID --credentials "$RYRA_CONNECTION_CREDENTIALS"
 --state "$RYRA_CONNECTION_STATE" -- COMMAND`. Executable authentication adapters
 use that same storage and restart path, keeping opaque refresh state out of the
 consumer's environment. They own protocol validation, account identity and grant
-checks. Plain API keys have no automatic verification or refresh.
+checks. Token connections can declare an optional `verify` request: a fixed HTTPS
+`url`, `headers` using `{credential_field}` placeholders, and JSON pointers in
+`present` or exact values in `require`. An optional `form` sends a POST for token
+exchanges; otherwise the request is a GET. Use a harmless authenticated operation
+that needs no extra permissions beyond the connection's purpose. Ryra runs it
+before saving, records the result with those credentials, and offers verification
+again for saved connections. Requests time out after 15 seconds and do not follow
+redirects. No check means "Credentials saved", not verified access. These checks
+do not refresh credentials or prove that a deployed service is healthy.
 
 ## Required credentials
 

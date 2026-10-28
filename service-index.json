@@ -268,6 +268,15 @@
         },
         "label": "Gemini API",
         "organization_owned": true,
+        "verify": {
+          "headers": {
+            "x-goog-api-key": "{api_key}"
+          },
+          "present": [
+            "/models"
+          ],
+          "url": "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
+        },
         "why": "Use your project's Gemini API key in AI tools."
       }
     },
@@ -323,6 +332,16 @@
           "/driver/configuration/client_secret": {
             "env": "RYRA_GITHUB_CLIENT_SECRET"
           }
+        },
+        "verify": {
+          "headers": {
+            "Authorization": "Bearer {token}"
+          },
+          "present": [
+            "/id",
+            "/login"
+          ],
+          "url": "https://api.github.com/user"
         },
         "why": "Read and push repositories as yourself, and create deploy keys for your machines."
       }
@@ -1030,6 +1049,18 @@
         },
         "label": "Tailscale",
         "organization_owned": true,
+        "verify": {
+          "form": {
+            "client_id": "{client_id}",
+            "client_secret": "{client_secret}",
+            "grant_type": "client_credentials",
+            "scope": "auth_keys"
+          },
+          "present": [
+            "/access_token"
+          ],
+          "url": "https://api.tailscale.com/api/v2/oauth/token"
+        },
         "why": "Ryra uses this credential to enroll machines and apply reviewed private service addresses and access rules. The management credential stays in your organization's vault."
       }
     },
